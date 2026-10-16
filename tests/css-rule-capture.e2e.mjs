@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs/promises';
 import {chromium} from 'playwright';
 import {createCssRuleCollector} from '../css-rule-capture.mjs';
 import {captureStructuredState} from '../interaction-snapshot.mjs';
 import {linkRuleStates} from '../rule-state-linker.mjs';
 import {semanticDiff,semanticHash} from '../state-diff.mjs';
+import {jsonChunks} from '../json-writer.mjs';
 
 const external=`@layer base,theme;
 @layer base { :root { --accent: rgb(20, 40, 60) } #menu { color:var(--accent) } }
@@ -120,4 +122,39 @@ test('inherited variables share resolved sets and inline/presentation styles nev
     assert.ok(data.rules.every(r=>!('style' in r.protocol)));
     assert.ok(data.rules.some(r=>r.source.kind==='attributes' && r.source.elementId===snapshot.nodes.find(n=>n.selector==='#path').elementId));
   }finally{await collector?.dispose();await browser.close();}
+});
+
+test('supplied ISSUE-001 and ISSUE-008 fixtures retain sources without per-element declaration copies',async()=>{
+  const browser=await chromium.launch();
+  const bytes=value=>{let size=0;for(const chunk of jsonChunks(value))size+=Buffer.byteLength(chunk);return size;};
+  try {
+    const page=await browser.newPage({viewport:{width:1440,height:900}});
+    for(const name of ['ISSUE-001/page-50.html','ISSUE-001/page-200.html','ISSUE-001/page-800.html','ISSUE-008/page.html']) {
+      await page.setContent(await fs.readFile(new URL(`./fixtures/css-repros/${name}`,import.meta.url),'utf8'));
+      const collector=await createCssRuleCollector(page,{maxNodes:1000});
+      try {
+        const snapshot=await captureStructuredState(page);await collector.fingerprint(snapshot);await collector.capture(snapshot,'fixture');
+        const evidence=collector.export();
+        assert.equal(evidence.stylesheets.length,1,name);
+        assert.ok(evidence.stylesheets.every(s=>s.header),name);
+        assert.ok(!evidence.missing.some(m=>m.kind==='stylesheet-header-unavailable'),name);
+        if(name.startsWith('ISSUE-001')) {
+          const declared=evidence.rules.flatMap(rule=>rule.variableNames.map(name=>`${rule.id}|${name}`));
+          assert.equal(new Set(declared).size,201,name);
+          assert.equal(declared.length,201,name);
+          assert.equal(evidence.variables.resolvedSets.length,2,name);
+          assert.ok(evidence.variables.elements.every(e=>!('declarations' in e)),name);
+          const rules=new Map(evidence.rules.map(r=>[r.id,r]));
+          const paragraph=snapshot.nodes.find(n=>n.tagName==='p');
+          const resolved=evidence.variables.elements.find(e=>e.elementId===paragraph?.elementId);
+          assert.ok(resolved,name);
+          assert.ok(resolved.sourceRuleIds.some(id=>rules.get(id).variableNames.includes('--local')),name);
+          assert.equal(evidence.variables.resolvedSets.find(s=>s.id===resolved.resolvedSetId).values['--v199'],'199px',name);
+          // Only references grow with the element count; declaration/value bodies are shared.
+          const shared=bytes(evidence.variables.resolvedSets);
+          assert.ok(bytes(evidence.variables)<shared+evidence.variables.elements.length*500,name);
+        }
+      }finally{await collector.dispose();}
+    }
+  }finally{await browser.close();}
 });

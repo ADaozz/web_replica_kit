@@ -7,17 +7,18 @@ import {pathToFileURL} from 'node:url';
 import {performance} from 'node:perf_hooks';
 import {chromium} from 'playwright';
 import {captureStructuredState} from '../interaction-snapshot.mjs';
-const [collectorPath,outputPath]=process.argv.slice(2);
-if(!collectorPath || !outputPath)throw new Error('Usage: node scripts/benchmark-css-evidence.mjs COLLECTOR.mjs METRICS.json');
+const [collectorPath,outputPath,fixturePath]=process.argv.slice(2);
+if(!collectorPath || !outputPath)throw new Error('Usage: node scripts/benchmark-css-evidence.mjs COLLECTOR.mjs METRICS.json [FIXTURE.html]');
 const {createCssRuleCollector}=await import(pathToFileURL(path.resolve(collectorPath)).href);
 const browser=await chromium.launch();let collector;
 try {
   const page=await browser.newPage({viewport:{width:1440,height:900}});
   const vars=Array.from({length:223},(_,i)=>`--v${i}:${i}px`).join(';');
   const items=Array.from({length:370},(_,i)=>`<button class="item" id="item-${i}" style="margin:0">Item ${i}</button>`).join('');
-  await page.setContent(`<style>:root{${vars}}.item{padding:var(--v1)}</style><main style="display:block">${items}</main>`);
+  await page.setContent(fixturePath?await fs.readFile(fixturePath,'utf8'):`<style>:root{${vars}}.item{padding:var(--v1)}</style><main style="display:block">${items}</main>`);
   const started=performance.now();
-  collector=await createCssRuleCollector(page,{maxNodes:500});
+  const maxNodes=fixturePath?1000:500;
+  collector=await createCssRuleCollector(page,{maxNodes});
   const state=await captureStructuredState(page);await collector.fingerprint(state);await collector.capture(state,'fixture');
   const data=collector.export(),variables=data.variables;
   // Baseline intentionally uses the original serialization, in an isolated process.
@@ -31,7 +32,7 @@ try {
   const durationMs=Math.round(performance.now()-started),nodePeakRssKiB=process.resourceUsage().maxRSS;
   const declarationCopies=Array.isArray(variables)?variables.reduce((sum,e)=>sum+e.declarations.length,0):0;
   const declaredPairs=Array.isArray(variables)?new Set(variables.flatMap(e=>e.declarations.map(d=>`${d.ruleId}|${d.name}`))).size:data.rules.reduce((sum,r)=>sum+(r.variableNames?.length || 0),0);
-  const metrics={kind:'synthetic-css-reproduction',fixture:{elements:370,customProperties:223,viewport:{width:1440,height:900},maxCssNodes:500},node:process.version,browser:browser.version(),schemaVersion:data.schemaVersion,
+  const metrics={kind:'synthetic-css-reproduction',fixture:fixturePath?{file:fixturePath,viewport:{width:1440,height:900},maxCssNodes:maxNodes}:{elements:370,customProperties:223,viewport:{width:1440,height:900},maxCssNodes:maxNodes},node:process.version,browser:browser.version(),schemaVersion:data.schemaVersion,
     capturedNodes:data.snapshots[0].elements.length,stylesheetRecords:data.stylesheets.length,headerlessStylesheetRecords:data.stylesheets.filter(s=>!s.header).length,
     copiedVariableDeclarations:declarationCopies,uniqueRuleVariablePairs:declaredPairs,resolvedSets:variables.resolvedSets?.length ?? null,variableBytes,totalCssBytes:totalBytes,
     durationMs,nodePeakRssKiB,memoryScope:'Node collector and serialization only; excludes Chromium and metric-analysis allocations',sizeScope:'Compact serialization of collector exports, not the complete capture directory or source-site measurements',samples:1};
