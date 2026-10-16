@@ -1,3 +1,7 @@
+import { captureStructuredState } from './interaction-snapshot.mjs';
+import { discoverAllFrames } from './actionable-dom.mjs';
+import { semanticDiff } from './state-diff.mjs';
+import { protectExploration } from './exploration-safety.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -42,7 +46,9 @@ export async function recordIconInteractions({ page, out, snapshot, settle = 100
         const scroll = await page.evaluate(() => ({ x: scrollX, y: scrollY }));
         await page.screenshot({ path: path.join(out, screenshot), fullPage: true, animations: 'disabled', timeout: 30000 });
         if (revision !== sequence) { dropped++; brokenChain = true; return; }
-        state = { id, hash, html, screenshot, scroll };
+        const semanticSnapshot = page.frames ? await captureStructuredState(page) : null;
+        const inventory = page.frames ? await discoverAllFrames(page) : null;
+        state = { id, hash, html, screenshot, scroll, semanticSnapshot, controls: inventory?.controls || [] };
         states.push(state); htmlBytes += Buffer.byteLength(html);
         await fs.writeFile(path.join(out, `${id}.html`), html);
       }
@@ -54,6 +60,7 @@ export async function recordIconInteractions({ page, out, snapshot, settle = 100
       if (event) console.log('已记录原网页交互：', event.type, '|', states.length, '个状态');
     } catch (error) { errors.push(String(error.message || error)); }
   }
+  const networkProtection = page.route ? await protectExploration(page) : null;
   await capture();
   await page.exposeBinding(binding, (_source, event) => {
     if (!accepting) return;
@@ -96,9 +103,10 @@ export async function recordIconInteractions({ page, out, snapshot, settle = 100
       queue = queue.then(() => capture(item.event, item.revision));
     }
     await queue;
+    await networkProtection?.dispose();
   }
   const graph = validateRecordedTransitions(transitions);
-  return { states, transitions: graph.replayable, ambiguousTransitions: graph.ambiguous, observations, inventory, dropped, errors,
+  return { localTransitions: recordedLocalTransitions(states, graph.replayable), states, transitions: graph.replayable, ambiguousTransitions: graph.ambiguous, observations, inventory, dropped, errors,
     basis: 'observed-on-original-page', browserReplayVerified: false, probe,
     limitations: ['只回放已经操作并捕获的视觉状态，不恢复原站接口、业务函数或未录制的交互。',
       '连续操作过快、延迟超过等待时间或后台持续变化会影响状态关联，需要检查截图和操作记录。'] };
@@ -216,4 +224,20 @@ export function buildRecordedPreview(recording) {
   const payload = JSON.stringify({ states: recording.states, transitions: graph.replayable }).replace(/</g, '\\u003c');
   const html = allowInlineScript(recording.states[0].html, runtime);
   return html.replace(/<\/body>/i, `<script id="wrk-recorded-states" type="application/json">${payload}</script><script>${runtime}</script></body>`);
+}
+
+// Compile legacy icon observations into the same local model; whole-page snapshots
+// remain evidence. Never invent behavior from an icon or replace a working model.
+export function recordedLocalTransitions(states, transitions) {
+  const byId = new Map(states.map(s => [s.id,s]));
+  return transitions.flatMap(event => {
+    const before=byId.get(event.from),after=byId.get(event.to);
+    if (!before?.semanticSnapshot || !after?.semanticSnapshot) return [];
+    const control=before.controls?.find(c => c.selector===event.selector);
+    if (!control || control.classification!=='allowed-safe') return [];
+    const kind=event.type==='click'?'click':event.type==='keydown'?'press':event.type==='pointerover'?'hover':null;
+    if (!kind) return [];
+    const diff=semanticDiff(before.semanticSnapshot,after.semanticSnapshot);
+    return [{from:'icon-'+event.from,to:'icon-'+event.to,control,action:{kind,...(event.key?{key:event.key}:{})},effects:diff.effects,confidence:diff.changed?'observed':'observed-no-visible-change',replicaVerified:false}];
+  });
 }

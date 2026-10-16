@@ -49,6 +49,8 @@ export function classifyActionSafety(control, options = {}) {
     || control.pressed != null
     || popup
     || control.role === 'tab'
+    || Boolean(control.describedby)
+    || (['textbox','combobox'].includes(control.role) && Boolean(control.controls) && !control.form)
     || (['switch', 'checkbox', 'radio'].includes(control.role) && Boolean(control.controls));
   if (local && control.evidenceStrength !== 'weak') {
     return { classification: 'allowed-safe', reason: 'reversible local interface state' };
@@ -169,13 +171,14 @@ export function discoverActionableDom(options = {}) {
   function cssPath(el) {
     const root = el.getRootNode?.();
     const prefix = root?.host ? `${cssPath(root.host).selector} >>> ` : '';
-    if (el.id) return { selector: `${prefix}#${cssEscape(el.id)}`, stable: !prefix };
+    const unique = value => {try {return (root || document).querySelectorAll(value).length === 1;} catch {return false;}};
+    if (el.id && unique(`#${cssEscape(el.id)}`)) return { selector: `${prefix}#${cssEscape(el.id)}`, stable: true };
     const testId = el.getAttribute?.('data-testid');
-    if (testId) return { selector: `${prefix}[data-testid="${cssEscape(testId)}"]`, stable: !prefix };
+    if (testId && unique(`[data-testid="${cssEscape(testId)}"]`)) return { selector: `${prefix}[data-testid="${cssEscape(testId)}"]`, stable: true };
     const parts = [];
     let current = el;
     while (current && current.nodeType === 1 && current.localName !== 'html' && current.localName !== 'body') {
-      if (current.id) { parts.unshift(`#${cssEscape(current.id)}`); break; }
+      if (current.id && unique(`#${cssEscape(current.id)}`)) { parts.unshift(`#${cssEscape(current.id)}`); break; }
       const siblings = current.parentElement?.children || [];
       let nth = 0;
       for (const sibling of siblings) {
@@ -185,7 +188,11 @@ export function discoverActionableDom(options = {}) {
       parts.unshift(`${current.localName}:nth-of-type(${nth || 1})`);
       current = current.parentElement;
     }
-    return { selector: `${prefix}${parts.join(' > ')}`, stable: false };
+    const selector = `${prefix}${parts.join(' > ')}`;
+    const local = selector.split('>>>').pop().trim();
+    let scopedUnique = false;
+    try { scopedUnique = el.getRootNode?.()?.querySelectorAll?.(local)?.length === 1; } catch {}
+    return { selector, stable: scopedUnique };
   }
 
   function consider(el, root) {
@@ -247,7 +254,8 @@ export function discoverActionableDom(options = {}) {
       checked,
       selected: el.getAttribute('aria-selected'),
       popup: el.getAttribute('aria-haspopup'),
-      controls: el.getAttribute('aria-controls'),
+      controls: el.getAttribute('aria-controls') || el.getAttribute('popovertarget'),
+      describedby: el.getAttribute('aria-describedby'),
       enabled,
       editable: role === 'textbox' || evidence.includes('contenteditable'),
       visibility: visibility(el),
@@ -262,6 +270,7 @@ export function discoverActionableDom(options = {}) {
       hitTest: 'unverified',
       actionability: 'unverified',
       value: null,
+      options: el.localName === 'select' ? [...(el.options || [])].filter(o => !o.disabled).map(o => o.value) : null,
       sensitive: inputType === 'password' || /token|secret|password/i.test(`${name} ${el.getAttribute('name') || ''}`),
       noise: /timestamp|clock|nonce|uuid/i.test(`${el.id || ''} ${el.getAttribute('class') || ''}`)
     };
@@ -340,9 +349,9 @@ export function discoverActionableDom(options = {}) {
     if (item.draft.labelText) strategies.push({ type: 'label', name: item.draft.labelText, exact: true });
     if (item.draft.placeholder) strategies.push({ type: 'placeholder', name: item.draft.placeholder, exact: true });
     if (item.draft.testId) strategies.push({ type: 'testid', name: item.draft.testId });
-    if (item.draft.selectorStable) strategies.push({ type: 'css', selector: item.draft.selector, stable: true });
+    if (item.draft.selectorStable) strategies.push({ type: 'css', selector: item.draft.selector.replaceAll('>>>', ' '), stable: true });
     const safety = classifyActionSafety(item.draft, { allowSameOriginNavigation: options.allowSameOriginNavigation, pageOrigin });
-    const semanticKey = [frameUrl || 'main', item.draft.role || item.draft.tag, item.draft.accessibleName, occurrence].join('|');
+    const semanticKey = item.draft.selectorStable ? [frameUrl || 'main', JSON.stringify(framePath), item.draft.selector].join('|') : [frameUrl || 'main', item.draft.role || item.draft.tag, item.draft.accessibleName, occurrence].join('|');
     return {
       ...item.draft,
       id: semanticKey,
@@ -376,7 +385,7 @@ export async function discoverAllFrames(page, options = {}) {
   const regions = [];
   const limitations = [];
   let openShadows = 0;
-  for (const frame of page.frames()) {
+  for (const [frameIndex, frame] of page.frames().entries()) {
     const framePath = [];
     let cursor = frame;
     while (cursor.parentFrame()) {
@@ -398,7 +407,7 @@ export async function discoverAllFrames(page, options = {}) {
         framePath,
         pageOrigin: options.pageOrigin || frame.url()
       });
-      for (const control of found.controls || []) controls.push(control);
+      for (const control of found.controls || []) controls.push({ ...control, frameIndex });
       for (const region of found.regions || []) regions.push(region);
       limitations.push(...(found.limitations || []));
       openShadows += found.openShadows || 0;

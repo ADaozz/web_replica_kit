@@ -174,3 +174,41 @@ npm run audit -- output chatgpt-output
 - **像素级复刻**：以 screenshot 为基准，对比本地预览，逐步调整布局、字体、图片、动态内容，并手工重写必要交互。
 
 可参考 Playwright 官方文档：https://playwright.dev/docs/network 和 https://playwright.dev/docs/api/class-page
+
+## 交互探索与浏览器验收
+
+```bash
+node capture.mjs --url http://localhost:3000/lab --out output --explore-interactions --headless \
+  --explore-max-states 24 --explore-max-depth 4 --explore-max-actions 80
+npm run test:interactions
+```
+
+每个新状态会重新发现控件；恢复使用已观测的可逆动作，恢复校验失败就停止，不继续在未知状态点击。`max-actions` 限制探索及关闭探测次数；返回已知状态的恢复动作另行执行。导航仍须显式设置 `--allow-same-origin-navigation`。HTTP 写请求与 WebSocket 在探索前阻断，不能靠路径名称把 POST 当作只读请求。浏览器上下文阻止 Service Worker。
+
+默认保留弹层的父级、Portal 挂载容器、position 和 transform。只有不同布局下的实测记录证明内联坐标跟随触发器时，才启用测量得到的锚定修正；它监听滚动、窗口和内容尺寸变化。Dialog、原生 Popover 和 CSS Tooltip 继续使用浏览器原生布局。
+
+探索输出 `actions.json`、`states/graph.json`、`overlay-diagnostics.json`、`interaction-coverage.json`、`interaction-failures.json`。`states/evidence-*` 包含动作前后的 DOM 与截图。采集完成时 `interaction-verification.json` 明确标为 `not-run`，不会把“观测到”计为“验证通过”。
+
+浏览器验收使用顺序执行的 scenario 文件，例如：
+
+```json
+{
+  "viewport": { "width": 1440, "height": 900 },
+  "steps": [
+    { "control": { "selector": "#menu" }, "action": { "kind": "click" } },
+    { "control": { "selector": "#menu" }, "action": { "kind": "press", "key": "Escape" } }
+  ],
+  "coveragePath": "output/interaction-coverage.json"
+}
+```
+
+```bash
+node scripts/verify-interactions.mjs --browser \
+  http://localhost:3000/lab http://localhost:4173/lab scenario.json output/verification
+```
+
+两个地址须具有实际相同的 pathname/search/hash；验证器不会替换 URL 或清零坐标。`serve.mjs` 根据采集元数据保留原始入口路径，并在嵌套路由下提供本地资源；其他服务器也需要做同样的映射。验证逐步比较 DOM、属性、表单、History、边界坐标（容差 8px）及 PNG 像素差异（默认上限 1%）。每步保存截图、差异图、状态和弹层诊断，区分 passed / failed / skipped。任一步失败后的依赖步骤标为 skipped，不计入 verified。输出的诊断可区分初始重建差异和交互运行时差异；原站采集证据用于进一步判断采集阶段的问题。
+
+本地实验页覆盖 390/768/1440 宽度的右侧菜单、动态多级菜单、滚动与 transform 祖先、Portal、Tab、Switch、侧栏、Dialog、Popover、Tooltip 与 SPA History，并验证未知写操作在服务器收到前被阻断。运行 `npm run test:interactions` 会生成 `test-results/interaction-lab/` 中的可审查证据，不提交这些采集文件。
+
+能力边界：已有 Worker 传输无法证明安全时停止探索；closed Shadow DOM 不可读取；iframe 控件可发现并在原站探索，但未嵌入独立离线运行时的 frame 明确标为不支持回放。未知业务操作、无法恢复的状态以及没有定位证据的动态策略不会被猜测补齐。整页录制快照仍可用于调试和旧模式；同时启用探索时，图标录制的可编译局部变化合入新模型，整页回放不覆盖局部运行时。

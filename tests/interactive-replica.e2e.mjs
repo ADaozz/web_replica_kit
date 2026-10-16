@@ -49,9 +49,10 @@ function bindToggle(id) {
   const button = document.getElementById(id);
   const panel = document.getElementById(button.getAttribute('aria-controls'));
   button.addEventListener('click', () => {
-    const open = button.getAttribute('aria-expanded') !== 'true';
-    button.setAttribute('aria-expanded', String(open));
-    if (button.role === 'switch' || button.getAttribute('role') === 'switch') button.setAttribute('aria-checked', String(open));
+    const isSwitch = button.getAttribute('role') === 'switch';
+    const attribute = isSwitch ? 'aria-checked' : 'aria-expanded';
+    const open = button.getAttribute(attribute) !== 'true';
+    button.setAttribute(attribute, String(open));
     panel.hidden = !open;
     if (id === 'side') panel.style.width = open ? '240px' : '72px';
   });
@@ -126,7 +127,7 @@ async function readState(page) {
         expanded: aria === 'aria-expanded' ? el.getAttribute(aria) : null,
         checked: aria === 'aria-checked' ? el.getAttribute(aria) : null,
         selected: aria === 'aria-selected' ? el.getAttribute(aria) : null,
-        bbox: { width: box.width, height: box.height, x: 0, y: 0 }
+        bbox: { width: box.width, height: box.height, x: box.x, y: box.y }
       };
     })
   }));
@@ -155,7 +156,8 @@ test('source exploration and offline runtime reproduce observed local interactio
 
     const offline = injectOfflineRuntime(pageHtml.replace(/<script>[\s\S]*<\/script>/, ''), exploration.model);
     const replica = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    await replica.setContent(offline);
+    await replica.route(fixture.url, route => route.fulfill({contentType:'text/html',body:offline}));
+    await replica.goto(fixture.url);
     await replica.click('#more');
     await replica.click('#mode');
     await replica.click('#tab-b');
@@ -171,8 +173,6 @@ test('source exploration and offline runtime reproduce observed local interactio
     await page.click('#tab-b');
     const sourceState = await readState(page);
     const replicaState = await readState(replica);
-    replicaState.route = sourceState.route;
-    replicaState.origin = sourceState.origin;
     const compared = compareInteractionSnapshots(sourceState, replicaState);
     assert.equal(compared.verified, true, JSON.stringify(compared.effects));
   } finally {

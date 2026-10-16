@@ -64,6 +64,7 @@ export function mount(nodes, { baseURI = 'http://fixture.test/app' } = {}) {
 
 function filter(nodes, selector) {
   if (selector === '*') return nodes;
+  if (/^#[a-zA-Z0-9_-]+$/.test(selector)) return nodes.filter(node => node.id === selector.slice(1));
   if (selector === 'label') return nodes.filter(node => node.localName === 'label');
   if (selector === 'template') return nodes.filter(node => node.localName === 'template');
   if (selector.includes('nav')) return nodes.filter(node => node.localName === 'nav' || node.localName === 'aside' || node.getAttribute('role') === 'navigation' || node.getAttribute('role') === 'complementary');

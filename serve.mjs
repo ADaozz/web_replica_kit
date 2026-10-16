@@ -2,8 +2,7 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-const root = path.resolve(process.argv[2] || 'output');
-const port = Number(process.argv[3] || 4173);
+import { pathToFileURL } from 'node:url';
 const types = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -13,10 +12,20 @@ const types = {
   '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf',
   '.otf': 'font/otf', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg'
 };
-http.createServer(async (req, res) => {
+export async function createPreviewServer(directory) {
+  const root=path.resolve(directory);
+  const routes=await fs.readFile(path.join(root,'routes.json'),'utf8').then(JSON.parse).catch(()=>null);
+  const report=await fs.readFile(path.join(root,'report.json'),'utf8').then(JSON.parse).catch(()=>null);
+  const initialPaths=new Set(['/']);
+  for (const route of [routes?.initialRoute,report?.sourceUrl]) {
+    if (route) {try {initialPaths.add(new URL(route,'http://localhost').pathname);} catch {}}
+  }
+  return http.createServer(async (req, res) => {
   try {
     const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-    const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
+    const assetOffset=pathname.lastIndexOf('/assets/');
+    const relative=initialPaths.has(pathname) ? '/index.html' : assetOffset>=0 ? pathname.slice(assetOffset) : pathname;
+    const file = path.resolve(root, '.' + relative);
     if (!(file === root || file.startsWith(root + path.sep))) {
       res.writeHead(403); res.end('Forbidden'); return;
     }
@@ -26,4 +35,10 @@ http.createServer(async (req, res) => {
   } catch {
     res.writeHead(404); res.end('Not found');
   }
-}).listen(port, '127.0.0.1', () => console.log(`Preview: http://127.0.0.1:${port}`));
+  });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const server=await createPreviewServer(process.argv[2] || 'output');
+  server.listen(Number(process.argv[3] || 4173),'127.0.0.1',()=>console.log(`Preview: http://127.0.0.1:${server.address().port}`));
+}

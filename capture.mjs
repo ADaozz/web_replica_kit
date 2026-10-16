@@ -14,8 +14,8 @@ import { discoverIcons, completeIcons, inlineSpriteSymbols } from './icon-captur
 import { annotateBasicInteractions, interactionScript } from './basic-interactions.mjs';
 import { analyzeIconInteractions } from './icon-interactions.mjs';
 import { recordIconInteractions, buildRecordedPreview, rewriteRecordedAssets, recordedInteractionScript } from './recorded-interactions.mjs';
+import { compileLocalMachines, injectOfflineRuntime } from './offline-runtime.mjs';
 import { explorePage } from './interaction-explorer.mjs';
-import { injectOfflineRuntime } from './offline-runtime.mjs';
 import { injectSnapshotScrollRuntime } from './snapshot-scroll.mjs';
 import { finalizeSnapshotResources } from './snapshot-resources.mjs';
 
@@ -50,7 +50,7 @@ function parseArgs(argv) {
     height: clamp(args.height, 900, 320, 2160),
     wait: clamp(args.wait, 1500, 0, 30000),
     maxNodes: clamp(args['max-nodes'], 5000, 1, 20000),
-    headed: Boolean(args.headed || args.manual || args['manual-icon-interactions'] || args['explore-interactions']),
+    headed: !args.headless && Boolean(args.headed || args.manual || args['manual-icon-interactions'] || args['explore-interactions']),
     manual: Boolean(args.manual),
     recordIconInteractions: Boolean(args['record-icon-interactions'] || args['manual-icon-interactions']),
     manualIconInteractions: Boolean(args['manual-icon-interactions']),
@@ -567,7 +567,7 @@ async function main() {
       if (navigationInterrupted(error) || /Timeout/i.test(String(error?.message || error))) return;
       throw error;
     });
-    if (opts.exploreInteractions && process.stdin.isTTY) {
+    if (opts.exploreInteractions && opts.headed && process.stdin.isTTY) {
       console.log('\n浏览器已打开。请先在窗口里完成验证并登录。');
       console.log('按 Enter 时，窗口里已经显示的仓库、模型和侧栏会被原样保存，然后再尝试记录可展开的控件。');
       await waitForOperator('登录完成、目标页面可见后，按 Enter 开始采集：');
@@ -604,6 +604,7 @@ async function main() {
         exploration = await explorePage(page, {
           allowSameOriginNavigation: opts.allowSameOriginNavigation,
           preserveSettledDocument: true,
+          evidenceDir: opts.out,
           budgets: { maxStates: opts.exploreMaxStates, maxDepth: opts.exploreMaxDepth, maxActions: opts.exploreMaxActions }
         });
         console.log(`交互探索：发现 ${exploration.coverage.discovered}，安全分母 ${exploration.coverage.denominator}，已观测 ${exploration.coverage.observed}，已验证 ${exploration.coverage.verified}。发现数量不是复刻完成数。`);
@@ -621,6 +622,12 @@ async function main() {
         return (await makeSnapshotHtml(page, currentMappings())).html;
       }
     }) : null;
+    if (exploration && recording?.localTransitions?.length) {
+      exploration.transitions.push(...recording.localTransitions);
+      exploration.model = { ...exploration.model, ...compileLocalMachines(exploration.transitions) };
+      exploration.coverage.implemented = new Set(exploration.model.machines.map(m => m.control.id)).size;
+      exploration.coverage.replayed = exploration.coverage.implemented;
+    }
     if (recording) {
       const candidates = new Map(iconInteractions.icons.map(row => [row.selector + '|' + row.iconName, row]));
       for (const inventory of observedControls) for (const row of inventory.icons) {
@@ -718,9 +725,18 @@ async function main() {
         state.html = rewriteRecordedAssets(state.html, mappings, opts.url);
         await fs.writeFile(path.join(opts.out, `${state.id}.html`), state.html);
       }
-      snapshot.html = buildRecordedPreview(recording);
-    } else if (exploration?.model?.machines?.length) {
-      snapshot.html = injectOfflineRuntime(snapshot.html, exploration.model);
+      if (!exploration?.model?.machines?.length) snapshot.html = buildRecordedPreview(recording);
+    }
+    if (exploration?.model?.machines?.length) {
+      const localizedModel = structuredClone(exploration.model);
+      for (const machine of localizedModel.machines) for (const edge of machine.edges) for (const effect of edge.effects) {
+        if (effect.html) effect.html = rewriteRecordedAssets(effect.html, mappings, opts.url);
+        if (['insert','remove'].includes(effect.type)) {
+          if (effect.from) effect.from = rewriteRecordedAssets(effect.from, mappings, opts.url);
+          if (effect.to) effect.to = rewriteRecordedAssets(effect.to, mappings, opts.url);
+        }
+      }
+      snapshot.html = injectOfflineRuntime(snapshot.html, localizedModel);
     }
     const assetDir = path.join(opts.out, 'assets');
     const spriteSources = [];
@@ -730,7 +746,7 @@ async function main() {
       }
     }
     snapshot.html = inlineSpriteSymbols(snapshot.html, spriteSources);
-    const interactionReport = { ...snapshot.interactions, mode: recording ? 'recorded-original-states' : exploration?.model?.machines?.length ? 'observed-local-runtime' : 'native-css-only',
+    const interactionReport = { ...snapshot.interactions, mode: exploration?.model?.machines?.length ? 'observed-local-runtime' : recording ? 'recorded-original-states' : 'native-css-only',
       guessedHandlersEnabled: false, iconCandidates: iconInteractions.totalIcons,
       iconHosts: iconInteractions.interactiveHosts,
       recording: recording ? { ...recording, states: recording.states.map(({ html, ...state }) => state), inventory: undefined } : null,
@@ -742,7 +758,7 @@ async function main() {
     };
     await Promise.all([
       fs.writeFile(path.join(opts.out, 'index.html'), snapshot.html),
-      fs.writeFile(path.join(opts.out, 'interactions.js'), recording ? recordedInteractionScript :
+      fs.writeFile(path.join(opts.out, 'interactions.js'), recording && !exploration?.model?.machines?.length ? recordedInteractionScript :
         '// 未录制原网页操作；保留原生 HTML/CSS 行为，不执行猜测的交互逻辑。\n'),
       writeJson('interactions.json', interactionReport),
       writeJson('icon-interactions.json', iconInteractions),
@@ -755,11 +771,13 @@ async function main() {
       writeJson('design-tokens.json', layout.tokens),
       writeJson('assets.json', [...recorded.values()]),
       writeJson('icons.json', iconReport),
-      exploration ? writeJson('actions.json', { transitions: exploration.transitions, limitations: exploration.limitations, replicaVerified: false }) : null,
-      exploration ? writeJson('routes.json', { routes: exploration.routes }) : null,
+      exploration ? writeJson('actions.json', { transitions: exploration.transitions, restorations: exploration.restorations, budgetUsage:exploration.budgetUsage, limitations: exploration.limitations, replicaVerified: false }) : null,
+      exploration ? writeJson('routes.json', { initialRoute: exploration.states[0]?.route, routes: exploration.routes }) : null,
       exploration ? writeJson('interaction-coverage.json', exploration.coverage) : null,
       exploration ? writeJson('interaction-failures.json', exploration.failures) : null,
-      exploration ? writeJson('states/graph.json', exploration.states) : null,
+      exploration ? writeJson('states/graph.json', { states: exploration.states, restorations: exploration.restorations, transitions: exploration.transitions.map(({from,to,control,action}) => ({from,to,controlId:control.id,action})) }) : null,
+      exploration ? writeJson('overlay-diagnostics.json', exploration.overlayDiagnostics) : null,
+      exploration ? writeJson('interaction-verification.json', { status: 'not-run', verified: 0, reason: 'Run scripts/verify-interactions.mjs with source and offline URLs' }) : null,
       writeJson('report.json', {
         capturedAt: new Date().toISOString(), sourceUrl: opts.url,
         finalUrl: page.url(), captureDiagnostics,

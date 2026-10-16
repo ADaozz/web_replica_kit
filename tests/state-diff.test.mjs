@@ -48,3 +48,31 @@ test('verification report keeps a denominator and fails closed on mismatch', () 
   assert.equal(report.denominator, 1);
   assert.equal(report.verified, 0);
 });
+
+test('structural snapshots retain positional selectors, shadow selectors, text and classes',async()=>{
+  const {semanticHash}=await import('../state-diff.mjs');
+  const before={route:'/lab',nodes:[{key:'anchor',selector:'#anchor',visible:true,bbox:{x:100,y:20,width:40,height:20}},{key:'popup',selector:'#host >>> div:nth-of-type(1)',visible:true,text:'First',attributes:{class:'old','aria-expanded':'true'},bbox:{x:100,y:40,width:100,height:80}}]};
+  const after={...before,nodes:[before.nodes[0],{...before.nodes[1],text:'Second',attributes:{class:'active'},bbox:{x:150,y:40,width:100,height:80}}]};
+  const diff=semanticDiff(before,after);
+  assert.ok(diff.effects.some(e=>e.type==='attribute' && e.name==='class'));
+  assert.ok(diff.effects.some(e=>e.type==='attribute' && e.name==='aria-expanded' && e.to===null));
+  assert.ok(diff.effects.some(e=>e.type==='text'));
+  assert.ok(diff.effects.some(e=>e.type==='geometry'));
+  assert.notEqual(semanticHash(before),semanticHash(after));
+  assert.equal(compareInteractionSnapshots(before,after).verified,false);
+});
+
+test('verification rejects uniform position errors and hashes ignore compensated scroll',async()=>{
+  const {semanticHash}=await import('../state-diff.mjs');
+  const a={route:'/lab',nodes:[{key:'a',visible:true,bbox:{x:100,y:100,width:50,height:20},documentBox:{x:100,y:100,width:50,height:20}}]};
+  const scrolled={...a,nodes:[{...a.nodes[0],bbox:{x:100,y:50,width:50,height:20}}]};
+  assert.equal(semanticHash(a),semanticHash(scrolled));
+  assert.equal(compareInteractionSnapshots(a,scrolled).verified,false);
+});
+
+test('attribute removal and reinsertion order does not create a false state or restore failure',async()=>{
+  const {semanticHash}=await import('../state-diff.mjs');
+  const a={route:'/lab',nodes:[{key:'popup',visible:false,attributes:{hidden:'',style:'position:absolute'}}]};
+  const b={route:'/lab',nodes:[{key:'popup',visible:false,attributes:{style:'position:absolute',hidden:''}}]};
+  assert.equal(semanticHash(a),semanticHash(b));assert.equal(semanticDiff(a,b).changed,false);
+});

@@ -127,6 +127,8 @@ test('a recorded menu is inserted when the closed page did not contain it', () =
     assert.equal(nodes.get('menu').text, 'Blog');
     assert.equal(repo.getAttribute('aria-expanded'), 'true');
     listeners.click({ target: repo, composedPath: () => [repo], preventDefault() {} });
+    assert.equal(nodes.get('menu').hidden, false, 'click must not execute an Escape-only edge');
+    listeners.keydown({ key: 'Escape', target: repo, composedPath: () => [repo], preventDefault() {} });
     assert.equal(nodes.get('menu').hidden, true);
     assert.equal(repo.getAttribute('aria-expanded'), 'false');
   } finally {
@@ -190,4 +192,11 @@ test('compiled machines keep observed effects and injection does not enable a pa
   assert.match(html, /wrk-offline-interactions/);
   assert.equal(html.includes('replaceChildren'), false);
   assert.equal(html.includes("script-src 'none'"), false);
+});
+
+test('conflicting local outcomes are unsupported instead of choosing the first observed result',()=>{
+  const base={from:'s0',control:{id:'menu',semanticKey:'menu',selector:'#menu',selectorStable:true},confidence:'observed',action:{kind:'click'}};
+  const model=compileLocalMachines([{...base,to:'s1',effects:[{selector:'#panel',type:'text',from:'',to:'First'}]},{...base,to:'s2',effects:[{selector:'#panel',type:'text',from:'',to:'Second'}]}]);
+  assert.equal(model.machines.length,0);
+  assert.ok(model.unsupported.some(item=>/ambiguous/.test(item.reason)));
 });

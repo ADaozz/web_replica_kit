@@ -122,3 +122,12 @@ test('budgets stop recursive exploration', async () => {
   assert.equal(result.truncated, true);
   assert.equal(ui.calls.some(call => call[0] === 'nested'), false);
 });
+
+test('failed restoration stops the graph instead of operating on an unknown state',async()=>{
+  const ui=harness();let restores=0;
+  const result=await exploreInteractionGraph({...ui,restore:async state=>{restores++;if(restores>2)throw new Error('target state mismatch');await ui.restore(state);}});
+  assert.equal(result.restoreFailed,true);
+  assert.equal(ui.calls.length,1);
+  assert.equal(restores,3,'do not attempt more inverse actions after restoration failed');
+  assert.equal(result.failures.filter(f=>f.stage==='restore').length,1);
+});

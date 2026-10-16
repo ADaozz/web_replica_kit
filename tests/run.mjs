@@ -11,3 +11,5 @@ import './state-diff.test.mjs';
 import './interaction-explorer.test.mjs';
 import './offline-runtime.test.mjs';
 import './snapshot-resources.test.mjs';
+
+import './overlay-positioning.test.mjs';

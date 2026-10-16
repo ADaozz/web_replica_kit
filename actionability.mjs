@@ -2,6 +2,7 @@ import { discoverAllFrames } from './actionable-dom.mjs';
 
 export async function resolveLocator(scope, control) {
   const strategies = control.locatorStrategies || [];
+  let ambiguous = false;
   for (const strategy of strategies) {
     let locator = null;
     try {
@@ -17,13 +18,13 @@ export async function resolveLocator(scope, control) {
     if (!locator) continue;
     const count = await locator.count();
     if (count === 1) return { locator, strategy: strategy.type };
-    if (count > 1) return { locator: null, reason: 'locatorAmbiguous', strategy: strategy.type };
+    if (count > 1) { ambiguous = true; continue; }
   }
   if (control.selector && control.selectorStable && scope.locator) {
-    const locator = scope.locator(control.selector);
+    const locator = scope.locator(control.selector.replaceAll('>>>', ' '));
     if (await locator.count() === 1) return { locator, strategy: 'css' };
   }
-  return { locator: null, reason: control.locatorAmbiguous ? 'locatorAmbiguous' : 'locatorMissing' };
+  return { locator: null, reason: control.locatorAmbiguous || ambiguous ? 'locatorAmbiguous' : 'locatorMissing' };
 }
 
 export function frameFor(page, control) {
@@ -31,6 +32,7 @@ export function frameFor(page, control) {
   if (control.frameUrl) {
     const match = frames.find(frame => frame.url() === control.frameUrl);
     if (match) return match;
+    if (control.framePath?.length) return null;
   }
   return page.mainFrame?.() || page;
 }
@@ -91,6 +93,8 @@ export async function runPlaywrightAction(page, control, action) {
   const before = await scrollOf(page);
   try {
     if (action.kind === 'press') await resolved.locator.focus?.({ timeout: 3000 });
+    else if (action.kind === 'hover') await resolved.locator.hover({ trial: true, timeout: 3000 });
+    else if (action.kind === 'fill') { if (!await resolved.locator.isEditable()) return { ok: false, reason: 'not-editable' }; }
     else await resolved.locator.click({ trial: true, timeout: 3000 });
   } catch (error) {
     return { ok: false, reason: String(error.message || error), strategy: resolved.strategy, trial: { scrollBefore: before } };
@@ -102,6 +106,8 @@ export async function runPlaywrightAction(page, control, action) {
     else await resolved.locator.click({ timeout: 3000 });
   } else if (action.kind === 'press') await resolved.locator.press(action.key, { timeout: 3000 });
   else if (action.kind === 'hover') await resolved.locator.hover({ timeout: 3000 });
+  else if (action.kind === 'fill') await resolved.locator.fill(action.value, { timeout: 3000 });
+  else if (action.kind === 'select') await resolved.locator.selectOption(action.value, { timeout: 3000 });
   else return { ok: false, reason: 'unsupported-action' };
   await stabilize(page);
   return { ok: true, strategy: resolved.strategy, trial: { scrollBefore: before, scrollAfter: afterTrial } };
