@@ -9,8 +9,6 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 import { makeSnapshotHtml } from '../capture.mjs';
-import { recordIconInteractions } from '../recorded-interactions.mjs';
-import { buildRecordedPreview } from '../recorded-interactions.mjs';
 
 const exec = promisify(execFile);
 const root = path.resolve(import.meta.dirname, '..');
@@ -154,67 +152,6 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
     await browser?.close();
     if (source.listening) await new Promise(resolve => source.close(resolve));
     if (preview?.listening) await new Promise(resolve => preview.close(resolve));
-    await fs.rm(out, { recursive: true, force: true });
-  }
-});
-
-// 直接在本地源页面执行真实处理器，再关闭源站验证采集到的状态图。
-test('automatic icon probing captures source-defined layout and replays it offline', async () => {
-  const out = await fs.mkdtemp(path.join(os.tmpdir(), 'replica-source-states-'));
-  const source = http.createServer((_req, res) => {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.end(`<!doctype html><html><head><style>
-      #panel { width: 271px; height: 60px; background: #36a; }
-      #tip { position: absolute; top: 100px; left: 40px; }
-    </style></head><body>
-      <button id="control" aria-expanded="true"><i data-icon-name="arbitrary-layout">界面</i></button>
-      <section id="panel">原页面板</section>
-      <button id="hover"><i data-icon-name="arbitrary-help">提示</i></button><div id="tip" hidden>原站提示</div>
-      <script>
-        control.onclick = () => {
-          const open = control.getAttribute('aria-expanded') !== 'true';
-          control.setAttribute('aria-expanded', String(open));
-          panel.style.width = open ? '271px' : '173px';
-        };
-        hover.onpointerenter = () => { tip.hidden = false; };
-        hover.onpointerleave = () => { tip.hidden = true; };
-      </script></body></html>`);
-  });
-  let browser;
-  try {
-    await new Promise((resolve, reject) => { source.once('error', reject); source.listen(0, '127.0.0.1', resolve); });
-    browser = await chromium.launch();
-    const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${source.address().port}`);
-    const recording = await recordIconInteractions({ page, out, settle: 100,
-      snapshot: async () => (await makeSnapshotHtml(page, {})).html });
-    assert.equal(recording.probe.automatic, true);
-    assert.equal(recording.probe.visitedHosts, 2);
-    assert.deepEqual(recording.errors, []);
-    assert.ok(recording.transitions.some(t => t.type === 'click' && t.selector === '#control'));
-    assert.ok(recording.transitions.some(t => t.type === 'pointerover' && t.selector === '#hover'));
-    await fs.writeFile(path.join(out, 'index.html'), buildRecordedPreview(recording));
-    await new Promise(resolve => source.close(resolve));
-    const { pathToFileURL } = await import('node:url');
-    await page.goto(pathToFileURL(path.join(out, 'index.html')).href);
-    const errors = [];
-    page.on('pageerror', error => errors.push(error.message));
-    await page.locator('#control').click();
-    await page.waitForFunction(() => document.querySelector('#panel').style.width === '173px');
-    assert.equal(await page.locator('#panel').evaluate(el => el.getBoundingClientRect().width), 173);
-    await page.waitForTimeout(100);
-    await page.locator('#control').click();
-    await page.waitForFunction(() => document.querySelector('#panel').style.width === '271px');
-    await page.waitForTimeout(100);
-    await page.locator('#hover').hover();
-    await page.locator('#tip').waitFor({ state: 'visible' });
-    await page.waitForTimeout(100);
-    await page.mouse.move(-1, -1);
-    await page.locator('#tip').waitFor({ state: 'hidden' });
-    assert.deepEqual(errors, []);
-  } finally {
-    await browser?.close();
-    if (source.listening) await new Promise(resolve => source.close(resolve));
     await fs.rm(out, { recursive: true, force: true });
   }
 });

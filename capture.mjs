@@ -11,13 +11,10 @@ import crypto from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
 import { discoverIcons, completeIcons, inlineSpriteSymbols } from './icon-capture.mjs';
-import { annotateBasicInteractions, interactionScript } from './basic-interactions.mjs';
 import { analyzeIconInteractions } from './icon-interactions.mjs';
-import { recordIconInteractions, buildRecordedPreview, rewriteRecordedAssets, recordedInteractionScript } from './recorded-interactions.mjs';
-import { compileLocalMachines, injectOfflineRuntime } from './offline-runtime.mjs';
 import { explorePage } from './interaction-explorer.mjs';
 import { injectSnapshotScrollRuntime } from './snapshot-scroll.mjs';
-import { finalizeSnapshotResources } from './snapshot-resources.mjs';
+import { finalizeSnapshotResources, rewriteSnapshotAssets } from './snapshot-resources.mjs';
 
 const MB = 1024 * 1024;
 const MAX_PER_FILE = 12 * MB;
@@ -37,8 +34,10 @@ function parseArgs(argv) {
       }
     }
   }
+  const supported = new Set(['url','out','width','height','wait','max-nodes','headed','headless','manual','explore-interactions','allow-same-origin-navigation','explore-max-states','explore-max-depth','explore-max-actions','profile','ready-selector','ready-text','ready-timeout','executable']);
+  for (const key of Object.keys(args)) if (!supported.has(key)) throw new Error('Unknown option: --' + key);
   if (!args.url) {
-    console.error('Usage: node capture.mjs --url https://example.com [--out site] [--width 1440] [--height 900] [--wait 1500] [--max-nodes 5000] [--headed] [--manual] [--record-icon-interactions] [--manual-icon-interactions] [--explore-interactions] [--allow-same-origin-navigation] [--profile ./session] [--ready-selector SELECTOR] [--ready-text TEXT] [--executable /path/to/chromium]');
+    console.error('Usage: node capture.mjs --url https://example.com [--out site] [--width 1440] [--height 900] [--wait 1500] [--max-nodes 5000] [--headed] [--manual] [--explore-interactions] [--allow-same-origin-navigation] [--profile ./session] [--ready-selector SELECTOR] [--ready-text TEXT] [--executable /path/to/chromium]');
     process.exit(1);
   }
   const parsed = new URL(args.url);
@@ -50,10 +49,8 @@ function parseArgs(argv) {
     height: clamp(args.height, 900, 320, 2160),
     wait: clamp(args.wait, 1500, 0, 30000),
     maxNodes: clamp(args['max-nodes'], 5000, 1, 20000),
-    headed: !args.headless && Boolean(args.headed || args.manual || args['manual-icon-interactions'] || args['explore-interactions']),
+    headed: !args.headless && Boolean(args.headed || args.manual || args['explore-interactions']),
     manual: Boolean(args.manual),
-    recordIconInteractions: Boolean(args['record-icon-interactions'] || args['manual-icon-interactions']),
-    manualIconInteractions: Boolean(args['manual-icon-interactions']),
     exploreInteractions: Boolean(args['explore-interactions']),
     allowSameOriginNavigation: Boolean(args['allow-same-origin-navigation']),
     exploreMaxStates: clamp(args['explore-max-states'], 24, 1, 80),
@@ -274,10 +271,9 @@ async function inspectDOM(page, maxNodes) {
   }, maxNodes);
 }
 
-export async function makeSnapshotHtml(page, assetMap, { enableBasicInteractions = false } = {}) {
-  // 用浏览器句柄保留克隆节点，便于标记交互关系，不修改源页面，也不执行拼接代码。
-  const scriptHash = crypto.createHash('sha256').update(interactionScript).digest('base64');
-  const snapshot = await page.evaluateHandle(({ mappings, runtime, scriptHash, enabled }) => {
+export async function makeSnapshotHtml(page, assetMap) {
+  // Preserve the rendered DOM and native CSS; only scroll initialization is authorized.
+  const snapshot = await page.evaluateHandle(({ mappings }) => {
     const localMap = mappings;
     const base = document.baseURI;
     function mapURL(raw) {
@@ -399,7 +395,7 @@ export async function makeSnapshotHtml(page, assetMap, { enableBasicInteractions
     if (head) {
       const meta = document.createElement('meta');
       meta.setAttribute('http-equiv', 'Content-Security-Policy');
-      meta.setAttribute('content', `script-src ${enabled ? "'sha256-" + scriptHash + "'" : "'none'"}; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'`);
+      meta.setAttribute('content', "script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'");
       head.prepend(meta);
       // The source response may have supplied its encoding only through HTTP headers.
       // Snapshots are written as UTF-8 and must also decode correctly via file://.
@@ -407,18 +403,11 @@ export async function makeSnapshotHtml(page, assetMap, { enableBasicInteractions
       charset.setAttribute('charset', 'utf-8');
       head.prepend(charset);
     }
-    if (enabled) {
-      const script = document.createElement('script');
-      script.textContent = runtime;
-      (clone.querySelector('body') || clone).append(script);
-    }
     return clone;
-  }, { mappings: assetMap, runtime: interactionScript, scriptHash, enabled: enableBasicInteractions });
+  }, { mappings: assetMap });
   try {
-    const interactions = await snapshot.evaluate(annotateBasicInteractions, { applyBindings: enableBasicInteractions });
-    interactions.runtimeEnabled = enableBasicInteractions;
     const html = await snapshot.evaluate(root => '<!DOCTYPE html>\n' + root.outerHTML);
-    return { html: injectSnapshotScrollRuntime(finalizeSnapshotResources(html)), interactions };
+    return { html: injectSnapshotScrollRuntime(finalizeSnapshotResources(html)) };
   } finally { await snapshot.dispose(); }
 }
 
@@ -486,7 +475,6 @@ async function getCaptureDiagnostics(page) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  if (opts.manualIconInteractions && !process.stdin.isTTY) throw new Error('--manual-icon-interactions 需要交互式终端。');
   await fs.mkdir(path.join(opts.out, 'assets'), { recursive: true });
   const recorded = new Map();
   const redirectAliases = new Map();
@@ -589,56 +577,21 @@ async function main() {
     await waitForPending(pending);
     const iconInteractions = await page.evaluate(analyzeIconInteractions);
     let exploration = null;
-    let settledSnapshot = null;
-    let baselineLayout = opts.recordIconInteractions ? await inspectDOM(page, opts.maxNodes) : null;
-    let baselineOriginal = opts.recordIconInteractions ? await page.content() : null;
+    const baselineLayout = await inspectDOM(page, opts.maxNodes);
+    const baselineOriginal = await page.content();
+    const settledSnapshot = await makeSnapshotHtml(page, currentMappings());
+    const observedInventories = [await page.evaluate(discoverIcons, {limit:30000})];
+    await page.screenshot({path:path.join(opts.out,'screenshot.png'),fullPage:true,animations:'disabled'}).catch(error=>errors.push(String(error.message)));
     if (opts.exploreInteractions) {
       try {
-        // 先冻结用户确认时的页面。后面的探索点击和整页恢复不能把仓库、模型、侧栏刷回加载中。
-        baselineLayout = await inspectDOM(page, opts.maxNodes);
-        baselineOriginal = await page.content();
-        await page.screenshot({ path: path.join(opts.out, 'screenshot.png'), fullPage: true, animations: 'disabled', timeout: 30000 }).catch(error => {
-          errors.push('Settled screenshot failed: ' + String(error.message || error));
-        });
-        settledSnapshot = await makeSnapshotHtml(page, currentMappings());
         exploration = await explorePage(page, {
           allowSameOriginNavigation: opts.allowSameOriginNavigation,
-          preserveSettledDocument: true,
           evidenceDir: opts.out,
-          budgets: { maxStates: opts.exploreMaxStates, maxDepth: opts.exploreMaxDepth, maxActions: opts.exploreMaxActions }
+          onState: async () => { observedInventories.push(await page.evaluate(discoverIcons,{limit:30000})); },
+          budgets: {maxStates:opts.exploreMaxStates,maxDepth:opts.exploreMaxDepth,maxActions:opts.exploreMaxActions}
         });
-        console.log(`交互探索：发现 ${exploration.coverage.discovered}，安全分母 ${exploration.coverage.denominator}，已观测 ${exploration.coverage.observed}，已验证 ${exploration.coverage.verified}。发现数量不是复刻完成数。`);
-      } catch (error) {
-        errors.push('Interaction explore failed: ' + String(error.message || error));
-      }
-    }
-    const observedInventories = [];
-    const observedControls = [];
-    const recording = opts.recordIconInteractions ? await recordIconInteractions({ page, out: opts.out, manual: opts.manualIconInteractions,
-      snapshot: async () => {
-        await waitForPending(pending);
-        observedInventories.push(await page.evaluate(discoverIcons, { limit: 30000 }));
-        observedControls.push(await page.evaluate(analyzeIconInteractions));
-        return (await makeSnapshotHtml(page, currentMappings())).html;
-      }
-    }) : null;
-    if (exploration && recording?.localTransitions?.length) {
-      exploration.transitions.push(...recording.localTransitions);
-      exploration.model = { ...exploration.model, ...compileLocalMachines(exploration.transitions) };
-      exploration.coverage.implemented = new Set(exploration.model.machines.map(m => m.control.id)).size;
-      exploration.coverage.replayed = exploration.coverage.implemented;
-    }
-    if (recording) {
-      const candidates = new Map(iconInteractions.icons.map(row => [row.selector + '|' + row.iconName, row]));
-      for (const inventory of observedControls) for (const row of inventory.icons) {
-        const key = row.selector + '|' + row.iconName;
-        if (!candidates.has(key)) candidates.set(key, row);
-      }
-      iconInteractions.icons = [...candidates.values()].map((row, index) => ({ ...row, id: index + 1,
-        status: recording.observations.some(event => event.selector === row.host?.selector) ? 'observed-on-original-page' : row.status }));
-      iconInteractions.totalIcons = iconInteractions.icons.length;
-      iconInteractions.interactiveHosts = new Set(iconInteractions.icons.filter(row => row.host).map(row => row.host.selector)).size;
-      iconInteractions.recordedHosts = new Set(recording.observations.map(event => event.selector)).size;
+        console.log(`Interaction evidence: ${exploration.coverage.discovered} controls discovered, ${exploration.coverage.observed} observed.`);
+      } catch(error) {errors.push('Interaction collection failed: '+String(error.message));}
     }
     console.log('Checking required icon dependencies...');
     const inventory = await page.evaluate(discoverIcons, { limit: 30000 });
@@ -686,15 +639,6 @@ async function main() {
         return resource;
       }
     });
-    try {
-      if (recording?.states.length) await fs.copyFile(path.join(opts.out, recording.states[0].screenshot), path.join(opts.out, 'screenshot.png'));
-      else if (!settledSnapshot) await page.screenshot({ path: path.join(opts.out, 'screenshot.png'), fullPage: true,
-        animations: 'disabled', timeout: 30000 });
-    } catch (error) {
-      errors.push('Full-page screenshot failed: ' + String(error.message || error));
-      await page.screenshot({ path: path.join(opts.out, 'screenshot.png'),
-        animations: 'disabled', timeout: 15000 }).catch(() => {});
-    }
     await waitForPending(pending);
 
     const layout = baselineLayout || await inspectDOM(page, opts.maxNodes);
@@ -707,37 +651,15 @@ async function main() {
       [r.url, ...(r.aliases || [])].map(url => [url, r.localPath])));
 
     // 按资源目录改写相对路径，使下载后的样式表可以在本地使用。
-    const stylesheetSource = [];
     for (const resource of recorded.values()) {
       if (!resource.localPath.endsWith('.css')) continue;
       const fullPath = path.join(opts.out, resource.localPath);
       const raw = await fs.readFile(fullPath, 'utf8');
       await fs.writeFile(fullPath, rewriteCss(raw, resource.url, mappings, 'assets'));
-      stylesheetSource.push(`/* 来源：${resource.url.replace(/\*\//g, '')} */\n` +
-        rewriteCss(raw.replace(/@charset\s+[^;]+;/gi, ''), resource.url, mappings));
+
     }
 
-    const snapshot = settledSnapshot
-      ? { ...settledSnapshot, html: rewriteRecordedAssets(settledSnapshot.html, mappings, opts.url) }
-      : await makeSnapshotHtml(page, mappings);
-    if (recording?.states.length) {
-      for (const state of recording.states) {
-        state.html = rewriteRecordedAssets(state.html, mappings, opts.url);
-        await fs.writeFile(path.join(opts.out, `${state.id}.html`), state.html);
-      }
-      if (!exploration?.model?.machines?.length) snapshot.html = buildRecordedPreview(recording);
-    }
-    if (exploration?.model?.machines?.length) {
-      const localizedModel = structuredClone(exploration.model);
-      for (const machine of localizedModel.machines) for (const edge of machine.edges) for (const effect of edge.effects) {
-        if (effect.html) effect.html = rewriteRecordedAssets(effect.html, mappings, opts.url);
-        if (['insert','remove'].includes(effect.type)) {
-          if (effect.from) effect.from = rewriteRecordedAssets(effect.from, mappings, opts.url);
-          if (effect.to) effect.to = rewriteRecordedAssets(effect.to, mappings, opts.url);
-        }
-      }
-      snapshot.html = injectOfflineRuntime(snapshot.html, localizedModel);
-    }
+    const snapshot = {...settledSnapshot,html:rewriteSnapshotAssets(settledSnapshot.html,mappings,opts.url)};
     const assetDir = path.join(opts.out, 'assets');
     const spriteSources = [];
     if (await fs.stat(assetDir).then(stat => stat.isDirectory()).catch(() => false)) {
@@ -746,47 +668,38 @@ async function main() {
       }
     }
     snapshot.html = inlineSpriteSymbols(snapshot.html, spriteSources);
-    const interactionReport = { ...snapshot.interactions, mode: exploration?.model?.machines?.length ? 'observed-local-runtime' : recording ? 'recorded-original-states' : 'native-css-only',
-      guessedHandlersEnabled: false, iconCandidates: iconInteractions.totalIcons,
-      iconHosts: iconInteractions.interactiveHosts,
-      recording: recording ? { ...recording, states: recording.states.map(({ html, ...state }) => state), inventory: undefined } : null,
-      exploration: exploration ? { coverage: exploration.coverage, truncated: exploration.truncated, states: exploration.states.length, replicaVerified: false } : null };
     const writeJson = async (file, data) => {
       const full = path.join(opts.out, file);
       await fs.mkdir(path.dirname(full), { recursive: true });
       await fs.writeFile(full, JSON.stringify(data, null, 2));
     };
+    await fs.mkdir(path.join(opts.out,'dom'),{recursive:true});
     await Promise.all([
       fs.writeFile(path.join(opts.out, 'index.html'), snapshot.html),
-      fs.writeFile(path.join(opts.out, 'interactions.js'), recording && !exploration?.model?.machines?.length ? recordedInteractionScript :
-        '// 未录制原网页操作；保留原生 HTML/CSS 行为，不执行猜测的交互逻辑。\n'),
-      writeJson('interactions.json', interactionReport),
-      writeJson('icon-interactions.json', iconInteractions),
-      fs.writeFile(path.join(opts.out, 'original.html'), originalHtml),
-      fs.writeFile(path.join(opts.out, 'styles.css'), stylesheetSource.join('\n\n')),
+      writeJson('dom/icon-hosts.json',iconInteractions),
+      fs.writeFile(path.join(opts.out,'dom/original.html'),originalHtml),
       writeJson('layout.json', { viewport: layout.viewport, pageSize: layout.pageSize,
         capped: layout.capped, nodes: layout.nodes }),
-      writeJson('dom-tree.json', layout.tree),
-      writeJson('components.json', layout.components),
-      writeJson('design-tokens.json', layout.tokens),
+      writeJson('dom/tree.json', layout.tree),
+      writeJson('dom/components.json', layout.components),
+      writeJson('dom/design-tokens.json', layout.tokens),
       writeJson('assets.json', [...recorded.values()]),
       writeJson('icons.json', iconReport),
-      exploration ? writeJson('actions.json', { transitions: exploration.transitions, restorations: exploration.restorations, budgetUsage:exploration.budgetUsage, limitations: exploration.limitations, replicaVerified: false }) : null,
-      exploration ? writeJson('routes.json', { initialRoute: exploration.states[0]?.route, routes: exploration.routes }) : null,
-      exploration ? writeJson('interaction-coverage.json', exploration.coverage) : null,
-      exploration ? writeJson('interaction-failures.json', exploration.failures) : null,
-      exploration ? writeJson('states/graph.json', { states: exploration.states, restorations: exploration.restorations, transitions: exploration.transitions.map(({from,to,control,action}) => ({from,to,controlId:control.id,action})) }) : null,
-      exploration ? writeJson('overlay-diagnostics.json', exploration.overlayDiagnostics) : null,
-      exploration ? writeJson('interaction-verification.json', { status: 'not-run', verified: 0, reason: 'Run scripts/verify-interactions.mjs with source and offline URLs' }) : null,
+      writeJson('interactions/controls.json',exploration?.controls || []),
+      writeJson('interactions/states.json',exploration?.states || []),
+      writeJson('interactions/transitions.json',exploration?.transitions || []),
+      writeJson('interactions/failures.json',exploration?.failures || []),
+      writeJson('interactions/restorations.json',exploration?.restorations || []),
+      writeJson('interactions/overlay-diagnostics.json',exploration?.overlayDiagnostics || []),
+      writeJson('routes.json',{initialRoute:new URL(opts.url).pathname,routes:exploration?.routes || []}),
       writeJson('report.json', {
         capturedAt: new Date().toISOString(), sourceUrl: opts.url,
         finalUrl: page.url(), captureDiagnostics,
         iconPolicy: iconReport.policy, iconsComplete: iconReport.complete,
         missingIcons: iconReport.missing.length,
-        basicInteractions: recording?.transitions.length || 0,
-        interactionMode: interactionReport.mode,
-        unresolvedInteractions: snapshot.interactions.unresolved.length,
-        interactionStatus: recording ? (recording.errors.length || recording.dropped || recording.ambiguousTransitions.length || recording.probe?.truncated || recording.probe?.attempts.some(a => a.errors.length) ? 'recording-needs-review' : 'recorded-states-unverified') : exploration ? 'observed-unverified' : 'source-recording-required',
+        purpose:'structure-style-behavior-evidence',
+        preview:'static',
+        exploration: exploration ? {coverage:exploration.coverage,truncated:exploration.truncated,restoreFailed:exploration.restoreFailed,budgetUsage:exploration.budgetUsage} : null,
         readinessMode: opts.manual ? 'manual' :
           opts.readySelector ? 'selector' : opts.readyText ? 'text' : 'fixed-delay',
         viewport: layout.viewport, pageSize: layout.pageSize,
@@ -794,7 +707,7 @@ async function main() {
         componentCandidates: layout.components.length, assetCount: recorded.size,
         assetBytes: totalBytes, errors: errors.slice(0, 100),
         limitations: [
-          'Original scripts are removed. Only observed state transitions are replayed; unrecorded custom handlers are not restored.',
+          'index.html is a static structure/style preview. Collected actions do not generate component behavior.',
           'Missing resources may still load from their original URLs.',
           'Cross-origin iframe contents, closed shadow roots, canvas pixels and application state are not fully exported.',
           'Only the captured viewport and rendered state are represented.',
@@ -804,9 +717,6 @@ async function main() {
     ]);
     console.log(`Saved ${layout.capturedNodes} nodes, ${recorded.size} assets to ${opts.out}`);
     console.log('Local preview: node serve.mjs ' + opts.out);
-    if (snapshot.interactions.unresolved.length) {
-      console.warn(`发现 ${snapshot.interactions.unresolved.length} 个尚未恢复的交互控件，请查看 interactions.json；图标完整不代表交互完整。`);
-    }
     if (!iconReport.complete) {
       console.error(`Required icons incomplete (${iconReport.missing.length}); see icons.json. Output retained for review.`);
       process.exitCode = 2;

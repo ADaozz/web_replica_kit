@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { finalizeSnapshotResources } from '../snapshot-resources.mjs';
-import { rewriteRecordedAssets } from '../recorded-interactions.mjs';
+import { rewriteSnapshotAssets } from '../snapshot-resources.mjs';
 
 test('localized resources shed CORS and stale SRI attributes while remote URLs retain them', () => {
   const html = '<link crossorigin="anonymous" href="assets/main.css" integrity="sha256-old">' +
@@ -27,8 +27,8 @@ test('script resource hints are removed without changing CSS preloads or inline 
   assert.ok(result.includes(script));
 });
 
-test('late downloaded styles lose CORS and integrity requirements in recorded snapshots', () => {
-  const result = rewriteRecordedAssets('<link rel="stylesheet" crossorigin="anonymous" integrity="old" href="https://cdn.example/new.css">',
+test('late downloaded styles lose CORS and integrity requirements in static snapshots', () => {
+  const result = rewriteSnapshotAssets('<link rel="stylesheet" crossorigin="anonymous" integrity="old" href="https://cdn.example/new.css">',
     { 'https://cdn.example/new.css': 'assets/new.css' }, 'https://example.test/');
   assert.equal(result, '<link rel="stylesheet" href="assets/new.css">');
 });

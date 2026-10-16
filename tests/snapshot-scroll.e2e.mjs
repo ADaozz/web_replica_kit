@@ -7,8 +7,6 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { makeSnapshotHtml } from '../capture.mjs';
-import { injectOfflineRuntime } from '../offline-runtime.mjs';
-import { buildRecordedPreview } from '../recorded-interactions.mjs';
 
 const fixture = `<!doctype html><html><head><style>
 body { margin:0 } #shell { width:600px; overflow:auto; scroll-timeline:--slide inline }
@@ -53,10 +51,7 @@ test('snapshot restores zero/nonzero scroll, nested and shadow offsets under CSP
       const expected = await source.locator('#rail').boundingBox();
       const snapshot = await makeSnapshotHtml(source, {});
       assert.ok(snapshot.html.includes(`data-wrk-scroll-left="${left}"`));
-      const model = { machines:[{control:{selector:'#toggle'},edges:[{action:{kind:'click'},from:[],effects:[
-        {type:'visibility',selector:'#panel',to:true}, {type:'aria',selector:'#toggle',name:'aria-expanded',to:'true'}
-      ]}]}] };
-      const html = injectOfflineRuntime(snapshot.html, model);
+      const html = snapshot.html;
       await fs.writeFile(path.join(directory, 'index.html'), html);
       for (const url of [pathToFileURL(path.join(directory,'index.html')).href, `http://127.0.0.1:${server.address().port}/`]) {
         const page = await browser.newPage({ viewport: { width:1000, height:700 } });
@@ -80,8 +75,8 @@ test('snapshot restores zero/nonzero scroll, nested and shadow offsets under CSP
         assert.equal(await page.locator('x-pending').evaluate(el=>el.matches(':defined')),false);
         assert.equal(await page.locator('#shell').evaluate(el=>el.style.getPropertyValue('scroll-snap-type')),'');
         await page.getByRole('button',{name:'More',exact:true}).click();
-        assert.equal(await page.locator('#panel').isVisible(),true,'interaction script still authorized');
-        assert.equal(await page.locator('#toggle').getAttribute('aria-expanded'),'true');
+        assert.equal(await page.locator('#panel').isVisible(),false,'static preview does not synthesize interactions');
+        assert.equal(await page.locator('#toggle').getAttribute('aria-expanded'),'false');
         await page.evaluate(()=>{const el=document.createElement('script');el.textContent='window.untrustedExecuted=true';document.body.append(el)});
         assert.equal(await page.evaluate(()=>window.untrustedExecuted),undefined,'CSP still blocks unapproved scripts');
         await page.close();
@@ -107,19 +102,6 @@ test('snapshot restores zero/nonzero scroll, nested and shadow offsets under CSP
       await active.waitForTimeout(100);
       assert.equal(await active.locator('#shell').evaluate(el=>el.scrollLeft),80,'late load preserves user changes');
     } finally { release(); await active.close(); }
-    // Legacy whole-state replay must restore nested offsets after importing a recorded state.
-    const a = await makeSnapshotHtml(source, {});
-    await source.locator('#outer').evaluate(el=>el.scrollTop=110);
-    const b = await makeSnapshotHtml(source, {});
-    const recording = {states:[{id:'a',html:a.html,scroll:{x:0,y:0}},{id:'b',html:b.html,scroll:{x:0,y:0}}],
-      transitions:[{from:'a',to:'b',selector:'#toggle',type:'click'}]};
-    await fs.writeFile(path.join(directory,'index.html'),buildRecordedPreview(recording));
-    const page=await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
-    await page.waitForTimeout(100);
-    await page.locator('#toggle').click();
-    await page.waitForTimeout(100);
-    assert.equal(await page.locator('#outer').evaluate(el=>el.scrollTop),110);
   } finally {
     await browser.close();
     await new Promise(resolve=>server.close(resolve));

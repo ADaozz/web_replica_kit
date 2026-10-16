@@ -53,7 +53,6 @@ test('all icon forms map to their actual semantic hosts without assuming a page 
     assert.equal(report.icons.find(row => row.formats.includes('css-mask')).host.popup, 'dialog');
     assert.equal(report.icons.find(row => row.formats.includes('::before')).host.selector, '#font-icon');
     assert.equal(report.icons.find(row => row.formats.includes('small-image-candidate')).host, null);
-    assert.equal(report.browserBehaviorVerified, false);
   });
 });
 
@@ -67,22 +66,4 @@ test('open shadow roots retain separate selectors and report inspection limits',
     assert.equal(report.icons[0].host.selector, '#component >>> #inside');
     assert.equal(analyzeIconInteractions({ limit: 1 }).truncated, true);
   });
-});
-
-test('the source observer reports real events without clicking or preventing site handlers', () => {
-  const button = new Element('button', { id: 'action', 'aria-label': '菜单' });
-  const icon = child(button, new Element('i', { 'data-icon-name': 'menu' }));
-  const events = [];
-  globalThis.__testIconBinding = payload => events.push(payload);
-  try {
-    withDocument([button, icon], root => {
-      analyzeIconInteractions({ recordBinding: '__testIconBinding' });
-      const event = new Event('click', { cancelable: true });
-      Object.defineProperty(event, 'composedPath', { value: () => [icon, button, root] });
-      root.dispatchEvent(event);
-      assert.equal(events.length, 1);
-      assert.equal(events[0].selector, '#action');
-      assert.equal(event.defaultPrevented, false);
-    });
-  } finally { delete globalThis.__testIconBinding; }
 });

@@ -69,7 +69,7 @@ try {
       await fs.writeFile(path.join(directory, 'capture.log'), captured.stdout + captured.stderr);
       result.capture = JSON.parse(await fs.readFile(path.join(directory, 'report.json'), 'utf8'));
       result.icons = JSON.parse(await fs.readFile(path.join(directory, 'icons.json'), 'utf8'));
-      result.interactions = JSON.parse(await fs.readFile(path.join(directory, 'interactions.json'), 'utf8'));
+      result.controls = JSON.parse(await fs.readFile(path.join(directory, 'interactions/controls.json'), 'utf8'));
       result.iconStatus = result.icons.complete ? 'complete' : 'incomplete';
       result.audit = await auditSnapshot(directory);
       context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, serviceWorkers: 'block' });

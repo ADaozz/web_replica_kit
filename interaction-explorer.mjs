@@ -1,4 +1,3 @@
-import { compileOverlayPositioning } from './overlay-positioning.mjs';
 import { protectExploration } from './exploration-safety.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -8,13 +7,8 @@ import { classifyActionSafety, discoverAllFrames } from './actionable-dom.mjs';
 import { runPlaywrightAction, stabilize } from './actionability.mjs';
 import { semanticDiff, semanticHash } from './state-diff.mjs';
 import { routeKey, routesFromTransitions } from './route-capture.mjs';
-import { compileLocalMachines } from './offline-runtime.mjs';
 
 const DEFAULT_BUDGETS = { maxStates: 24, maxDepth: 4, maxActions: 40 };
-
-export function consequentialWrites(writes = []) {
-  return writes.filter(write => !/\/analytics(?:\/|$)|track-events|telemetry|heartbeat|\/api\/t$|client-action|\/get-[^/]*$|\/list-[^/]*$/i.test(write.path || ''));
-}
 
 export function actionsFor(control) {
   const actions = [];
@@ -35,82 +29,21 @@ export function actionsFor(control) {
   return actions;
 }
 
-export function snapshotFromDiscovery(discovery, url) {
-  const parsed = new URL(url);
-  return {
-    url,
-    origin: parsed.origin,
-    route: routeKey(url),
-    nodes: [
-      ...(discovery.controls || []).filter(control => !control.noise).map(control => ({
-        key: control.semanticKey,
-        selector: control.selector,
-        visible: control.visibility === 'visible',
-        expanded: control.expanded ?? null,
-        pressed: control.pressed ?? null,
-        checked: control.checked ?? null,
-        selected: control.selected ?? null,
-        value: control.sensitive ? null : (control.value ?? null),
-        bbox: control.bbox || null,
-        noise: false
-      })),
-      ...(discovery.regions || []).map(region => ({
-        key: `region:${region.selector}`,
-        selector: region.selector,
-        visible: Boolean(region.visible),
-        expanded: null,
-        pressed: null,
-        checked: null,
-        selected: null,
-        value: null,
-        bbox: region.bbox || null,
-        noise: false
-      }))
-    ]
-  };
+export function summarizeCoverage({controls=[],checks=[],transitions=[]}) {
+  return {discovered:controls.length,
+    eligible:controls.filter(c=>c.classification==='allowed-safe' && c.visibility==='visible').length,
+    actionable:new Set(checks.filter(c=>c.actionable).map(c=>c.controlId)).size,
+    observed:new Set(transitions.filter(t=>t.confidence==='observed').map(t=>t.control.id)).size,
+    blocked:controls.filter(c=>c.classification==='blocked').length,
+    reviewRequired:controls.filter(c=>c.classification==='review-required').length};
 }
 
-export function summarizeCoverage({ controls, checks, transitions, machines, verified }) {
-  const list = controls || [];
-  const eligible = list.filter(control => control.classification !== 'blocked' && control.visibility !== 'currently-hidden');
-  const denominator = eligible.filter(control => control.classification === 'allowed-safe' && control.enabled !== false && !control.locatorAmbiguous);
-  const actionable = new Set((checks || []).filter(check => check.actionable).map(check => check.controlId));
-  const observed = new Set((transitions || []).filter(item => item.confidence === 'observed').map(item => item.control?.id));
-  const implemented = new Set((machines || []).map(machine => machine.control?.id));
-  const verifiedIds = new Set((verified || []).filter(id => implemented.has(id) && observed.has(id)));
-  return {
-    discovered: list.length,
-    eligible: eligible.length,
-    actionable: actionable.size,
-    observed: observed.size,
-    implemented: implemented.size,
-    replayed: implemented.size,
-    verified: verifiedIds.size,
-    denominator: denominator.length,
-    blocked: list.filter(control => control.classification === 'blocked').length,
-    reviewRequired: list.filter(control => control.classification === 'review-required').length,
-    note: 'Counts are staged. verified/denominator uses enabled, unambiguous, allowed-safe controls. Discovery is not replication.'
-  };
-}
-
-async function attachRevealedMarkup(diff, describeNodes) {
-  if (!describeNodes) return;
-  const selectors = [...new Set((diff.effects || []).filter(effect => effect.type === 'visibility' && !effect.nativeVisibility && effect.to === true && effect.selector).map(effect => effect.selector))];
-  if (!selectors.length) return;
-  const described = await describeNodes(selectors);
-  for (const effect of diff.effects) {
-    const match = (described || []).find(item => item && item.selector === effect.selector && item.html);
-    if (match) effect.html = match.html;
-  }
-}
-
-async function closeInPlace({ perform, capture, control, opened, describeNodes }) {
+async function closeInPlace({ perform, capture, control, opened }) {
   for (const action of [{ kind: 'press', key: 'Escape' }, { kind: 'click' }]) {
     const result = await perform(control, action).catch(error => ({ ok: false, reason: String(error.message || error) }));
-    if (!result?.ok || consequentialWrites(result.writes).length) continue;
+    if (!result?.ok || (result.writes || []).length) continue;
     const after = await capture();
     const diff = semanticDiff(opened, after);
-    await attachRevealedMarkup(diff, describeNodes);
     if (diff.changed) return { action, diff, after };
   }
   return null;
@@ -121,10 +54,9 @@ export async function exploreInteractionGraph({
   capture,
   perform,
   restore,
-  describeNodes,
   budgets = {},
   allowSameOriginNavigation = false,
-  preserveSettledDocument = false
+  onState
 }) {
   const limits = { ...DEFAULT_BUDGETS, ...budgets };
   const failures = [];
@@ -149,8 +81,10 @@ export async function exploreInteractionGraph({
     return { state };
   }
 
+  const enrich = async state => {if (state && !state.evidenceCollected) {state.evidenceCollected=true;state.evidence=await onState?.(state) || null;}};
   const initialSnapshot = await capture();
   const initial = remember(initialSnapshot, [], 0).state;
+  await enrich(initial);
   const queue = [initial];
   const queued = new Set([initial.id]);
   const seenControls = new Map();
@@ -218,17 +152,17 @@ export async function exploreInteractionGraph({
           report({ controlId: control.id, classification: result.writes?.length ? 'requires-backend' : undefined, stage: 'actionable', reason: result.reason || 'action-failed', action });
           continue;
         }
-        const writes = consequentialWrites(result.writes);
+        const writes = (result.writes || []);
         if (writes.length) {
           report({ controlId: control.id, stage: 'observed', classification: 'requires-backend', reason: 'write request observed', writes, action });
           continue;
         }
         const after = await capture();
         const diff = semanticDiff(before, after);
-        await attachRevealedMarkup(diff, describeNodes);
         const nextPath = diff.changed ? [...state.path, { semanticKey: control.semanticKey, action }] : state.path;
         const next = remember(after, nextPath, nextPath.length);
         if (next.truncated) truncated = true;
+        await enrich(next.state);
         transitions.push({
           from: state.id,
           to: next.state?.id || null,
@@ -237,11 +171,10 @@ export async function exploreInteractionGraph({
           effects: diff.effects,
           trial: result.trial || null,
           confidence: diff.changed ? 'observed' : 'observed-no-visible-change',
-          classification: safety.classification,
-          replicaVerified: false
+          classification: safety.classification
         });
-        if (preserveSettledDocument && action.kind === 'click' && diff.changed && control.tag !== 'a' && control.role !== 'tab') {
-          const closed = await closeInPlace({ perform: async (c,a) => { if (actionsRun >= limits.maxActions) {truncated=true;return {ok:false,reason:'action budget exhausted'};} actionsRun++; return perform(c,a); }, capture, control, opened: after, describeNodes });
+        if (action.kind === 'click' && diff.changed && control.tag !== 'a' && control.role !== 'tab') {
+          const closed = await closeInPlace({ perform: async (c,a) => { if (actionsRun >= limits.maxActions) {truncated=true;return {ok:false,reason:'action budget exhausted'};} actionsRun++; return perform(c,a); }, capture, control, opened: after });
           if (closed && semanticHash(closed.after) === semanticHash(before)) {
             transitions.push({
               from: next.state?.id || state.id,
@@ -251,8 +184,7 @@ export async function exploreInteractionGraph({
               effects: closed.diff.effects,
               trial: null,
               confidence: 'observed',
-              classification: safety.classification,
-              replicaVerified: false
+              classification: safety.classification
             });
           }
         }
@@ -268,22 +200,18 @@ export async function exploreInteractionGraph({
     report({ stateId: initial.id, stage: 'restore', reason: String(error.message || error) });
   }
   const controls = [...seenControls.values()];
-  const model = compileLocalMachines(transitions);
-  const machines = model.machines;
-  for (const item of model.unsupported) report({...item,stage:'implemented'});
   return {
-    states: states.map(state => ({ id: state.id, hash: state.hash, snapshot: state.snapshot, route: state.snapshot.route, depth: state.depth, path: state.path })),
+    states: states.map(state => ({ id: state.id, hash: state.hash, snapshot: state.snapshot, evidence:state.evidence, route: state.snapshot.route, depth: state.depth, path: state.path })),
     transitions,
     failures,
     checks,
     truncated,
     restoreFailed,
     budgetUsage: { actions: actionsRun, states: states.length, limits },
-    coverage: summarizeCoverage({ controls, checks, transitions, machines, verified: [] }),
+    coverage: summarizeCoverage({ controls, checks, transitions }),
     controls,
     routes: routesFromTransitions(transitions),
-    model,
-    limitations: ['Trial clicks are not treated as replicated behavior.', 'Unobserved actions stay unverified.', 'Closed shadow roots are not supported.']
+    limitations: ['Actionability is not evidence of a state change.', 'Unobserved behavior is unknown.', 'Closed shadow roots are not supported.']
   };
 }
 
@@ -317,11 +245,10 @@ export async function explorePage(page, options = {}) {
     if (!page.evaluate) return;
     const item = await collectOverlayDiagnostics(page, label);
     if (options.evidenceDir) {
-      const name = `states/evidence-${String(evidenceIndex++).padStart(4,'0')}`;
-      await fs.mkdir(path.join(options.evidenceDir,'states'), { recursive: true });
+      const name = `interactions/screenshots/evidence-${String(evidenceIndex++).padStart(4,'0')}`;
+      await fs.mkdir(path.join(options.evidenceDir,'interactions/screenshots'), { recursive: true });
       await page.screenshot({ path: path.join(options.evidenceDir, name+'.png'), animations:'disabled' }).catch(() => {});
-      await fs.writeFile(path.join(options.evidenceDir, name+'.html'), await page.content());
-      item.screenshot = name+'.png'; item.dom = name+'.html';
+      item.screenshot = name+'.png';
     }
     diagnostics.push(item);
   }
@@ -390,7 +317,7 @@ export async function explorePage(page, options = {}) {
   }
   try {
     const result = await exploreInteractionGraph({
-      allowSameOriginNavigation, preserveSettledDocument: true, budgets: options.budgets || {}, discover, capture, perform,
+      allowSameOriginNavigation, budgets: options.budgets || {}, discover, capture, perform, onState:options.onState,
       restore: async state => {
         if (semanticHash(await capture()) === state.hash) {await restoreScroll(state.snapshot);return;}
         while (journal.length) {
@@ -407,21 +334,15 @@ export async function explorePage(page, options = {}) {
         if (semanticHash(await capture()) !== state.hash) throw new Error('restore failed: target state mismatch');
         await restoreScroll(state.snapshot);
       },
-      describeNodes: async selectors => {
-        const snapshot = await capture();
-        return selectors.map(selector => snapshot.nodes.find(n => n.selector === selector)).filter(Boolean);
-      }
+
     });
     for (const inverse of restorations.filter(r=>r.success && !['history-back','leave'].includes(r.action.kind))) {
       const from=result.states.find(s=>s.hash===inverse.fromHash),to=result.states.find(s=>s.hash===inverse.toHash);
       if (!from || !to || !inverse.effects.length) continue;
-      result.transitions.push({from:from.id,to:to.id,control:inverse.control,action:inverse.action,effects:inverse.effects,confidence:'observed',classification:'allowed-safe',basis:'observed-restoration',replicaVerified:false});
+      result.transitions.push({from:from.id,to:to.id,control:inverse.control,action:inverse.action,effects:inverse.effects,confidence:'observed',classification:'allowed-safe',basis:'observed-restoration'});
     }
-    result.model=compileLocalMachines(result.transitions);
-    result.coverage=summarizeCoverage({controls:result.controls,checks:result.checks,transitions:result.transitions,machines:result.model.machines,verified:[]});
+    result.coverage=summarizeCoverage({controls:result.controls,checks:result.checks,transitions:result.transitions});
     result.budgetUsage.restorationActions=restorations.length;
-    result.model.overlays = compileOverlayPositioning(diagnostics);
-    result.model.initialRoute = result.states[0]?.route;
     return { ...result, restorations, overlayDiagnostics: diagnostics };
   } finally { await safety.dispose(); }
 }

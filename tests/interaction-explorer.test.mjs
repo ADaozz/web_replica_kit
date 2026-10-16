@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { consequentialWrites, exploreInteractionGraph, explorePage } from '../interaction-explorer.mjs';
+import { exploreInteractionGraph, explorePage } from '../interaction-explorer.mjs';
 
 function harness() {
   const world = { open: false, advanced: false, route: '/app', nested: false, posted: false, deleted: false };
@@ -70,9 +70,9 @@ test('explores local state changes, rediscovers nested controls, and blocks unsa
   assert.ok(result.failures.some(item => item.reason === 'locatorAmbiguous'));
   assert.equal(result.coverage.discovered >= 9, true);
   assert.equal(result.coverage.observed >= 2, true);
-  assert.equal(result.coverage.verified, 0);
-  assert.equal(result.coverage.denominator >= 1, true);
-  assert.equal(result.model.machines.some(machine => machine.control.selector === '#mode'), true);
+  assert.equal('model' in result, false);
+  assert.equal(result.coverage.eligible >= 1, true);
+
   assert.equal(ui.world.open, false);
 });
 
@@ -84,20 +84,9 @@ test('same-origin navigation can be recorded only when it is explicitly permitte
   assert.equal(ui.calls.some(call => call[0] === 'away'), false);
 });
 
-test('analytics and read-style requests do not block a local toggle', () => {
-  assert.deepEqual(consequentialWrites([
-    { method: 'POST', path: '/api/analytics/track-events' },
-    { method: 'POST', path: '/api/dashboard/get-hard-limit' },
-    { method: 'POST', path: '/api/dashboard/list-marketplace-plugins' },
-    { method: 'POST', path: '/api/t' },
-    { method: 'POST', path: '/api/dashboard/client-action' }
-  ]), []);
-  assert.equal(consequentialWrites([{ method: 'POST', path: '/api/send' }]).length, 1);
-});
-
 test('settled exploration opens and closes without queueing a reload path', async () => {
   const ui = harness();
-  const result = await exploreInteractionGraph({ ...ui, preserveSettledDocument: true, budgets: { maxDepth: 1, maxActions: 6, maxStates: 4 } });
+  const result = await exploreInteractionGraph({ ...ui, budgets: { maxDepth: 1, maxActions: 6, maxStates: 4 } });
   assert.ok(result.transitions.some(item => item.action.kind === 'click' && item.control.semanticKey === 'more'));
   assert.ok(result.transitions.some(item => item.action.key === 'Escape' && item.control.semanticKey === 'more'));
   assert.equal(ui.world.open, false);
@@ -112,7 +101,7 @@ test('a settled page is not reloaded before exploration', async () => {
     frames: () => [],
     goto: async () => { reloads++; }
   };
-  await explorePage(page, { preserveSettledDocument: true, budgets: { maxActions: 1, maxStates: 1, maxDepth: 1 } });
+  await explorePage(page, { budgets: { maxActions: 1, maxStates: 1, maxDepth: 1 } });
   assert.equal(reloads, 0);
 });
 
@@ -124,10 +113,10 @@ test('budgets stop recursive exploration', async () => {
 });
 
 test('failed restoration stops the graph instead of operating on an unknown state',async()=>{
-  const ui=harness();let restores=0;
-  const result=await exploreInteractionGraph({...ui,restore:async state=>{restores++;if(restores>2)throw new Error('target state mismatch');await ui.restore(state);}});
+  const ui=harness();let restores=0;let callsAtFailure=0;
+  const result=await exploreInteractionGraph({...ui,restore:async state=>{restores++;if(restores>2){callsAtFailure=ui.calls.length;throw new Error('target state mismatch');}await ui.restore(state);}});
   assert.equal(result.restoreFailed,true);
-  assert.equal(ui.calls.length,1);
+  assert.equal(ui.calls.length,callsAtFailure);
   assert.equal(restores,3,'do not attempt more inverse actions after restoration failed');
   assert.equal(result.failures.filter(f=>f.stage==='restore').length,1);
 });

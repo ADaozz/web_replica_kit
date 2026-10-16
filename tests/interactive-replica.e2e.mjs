@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { chromium } from 'playwright';
 import { explorePage } from '../interaction-explorer.mjs';
-import { injectOfflineRuntime } from '../offline-runtime.mjs';
-import { compareInteractionSnapshots } from '../state-diff.mjs';
+import { makeSnapshotHtml } from '../capture.mjs';
 
 const frameHtml = `<!doctype html><html><body>
 <button id="frame-more" aria-expanded="false" aria-controls="frame-panel">Frame more</button>
@@ -106,34 +105,7 @@ function serve() {
   })));
 }
 
-async function readState(page) {
-  return page.evaluate(() => ({
-    route: location.pathname + location.search + location.hash,
-    origin: location.origin,
-    nodes: [
-      ['more', '#more', 'aria-expanded'],
-      ['panel', '#panel'],
-      ['mode', '#mode', 'aria-checked'],
-      ['advanced', '#advanced'],
-      ['panel-a', '#panel-a'],
-      ['panel-b', '#panel-b'],
-      ['tab-b', '#tab-b', 'aria-selected'],
-      ['sidebar', '#sidebar']
-    ].map(([key, selector, aria]) => {
-      const el = document.querySelector(selector);
-      const box = el.getBoundingClientRect();
-      return {
-        key, selector, visible: !!el && !el.hidden && box.width > 0 && box.height > 0,
-        expanded: aria === 'aria-expanded' ? el.getAttribute(aria) : null,
-        checked: aria === 'aria-checked' ? el.getAttribute(aria) : null,
-        selected: aria === 'aria-selected' ? el.getAttribute(aria) : null,
-        bbox: { width: box.width, height: box.height, x: box.x, y: box.y }
-      };
-    })
-  }));
-}
-
-test('source exploration and offline runtime reproduce observed local interactions', async () => {
+test('source exploration records semantic controls, local differences and explicit capability boundaries', async () => {
   const fixture = await serve();
   const browser = await chromium.launch({ headless: true });
   try {
@@ -151,30 +123,18 @@ test('source exploration and offline runtime reproduce observed local interactio
     assert.equal(exploration.controls.some(control => control.accessibleName === 'Frame more'), true);
     assert.equal(exploration.transitions.some(item => item.control.accessibleName === '删除'), false);
     assert.ok(exploration.transitions.some(item => item.control.accessibleName === 'More' && item.confidence === 'observed'));
-    assert.equal(exploration.coverage.verified, 0);
-    assert.equal(exploration.coverage.denominator > 0, true);
+    assert.equal('model' in exploration,false);
+    assert.equal('implemented' in exploration.coverage,false);
+    assert.equal(exploration.coverage.eligible > 0, true);
 
-    const offline = injectOfflineRuntime(pageHtml.replace(/<script>[\s\S]*<\/script>/, ''), exploration.model);
-    const replica = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    await replica.route(fixture.url, route => route.fulfill({contentType:'text/html',body:offline}));
-    await replica.goto(fixture.url);
-    await replica.click('#more');
-    await replica.click('#mode');
-    await replica.click('#tab-b');
-    assert.equal(await replica.locator('#note').inputValue(), 'hello');
-    assert.equal(await replica.locator('#panel').isVisible(), true);
-    assert.equal(await replica.locator('#advanced').isVisible(), true);
-    assert.equal(await replica.locator('#panel-a').isHidden(), true);
-    assert.equal(await replica.locator('#panel-b').isVisible(), true);
-
-    await page.goto(fixture.url, { waitUntil: 'domcontentloaded' });
-    await page.click('#more');
-    await page.click('#mode');
-    await page.click('#tab-b');
-    const sourceState = await readState(page);
-    const replicaState = await readState(replica);
-    const compared = compareInteractionSnapshots(sourceState, replicaState);
-    assert.equal(compared.verified, true, JSON.stringify(compared.effects));
+    await page.goto(fixture.url);
+    const snapshot=await makeSnapshotHtml(page,{});
+    const preview=await browser.newPage();
+    await preview.setContent(snapshot.html);
+    await preview.click('#more');
+    assert.equal(await preview.locator('#panel').isVisible(),false);
+    assert.equal(snapshot.html.includes('wrk-offline-interactions'),false);
+    assert.equal(snapshot.html.includes('replaceChildren'),false);
   } finally {
     await browser.close();
     fixture.server.close();

@@ -1,9 +1,7 @@
 // 在原网页中检查所有常见图标形式，按实际 DOM 向上寻找交互宿主，不推断网站类型。
-export function analyzeIconInteractions({ recordBinding = null, limit = 30000 } = {}) {
+export function analyzeIconInteractions({ limit = 30000 } = {}) {
   const roles = new Set(['button', 'link', 'combobox', 'tab', 'switch', 'menuitem', 'checkbox', 'radio']);
-  const hosts = new Map();
-  const iconNodes = new Map();
-  let rows = [];
+  const rows = [];
   let scanned = 0;
   let truncated = false;
   function selector(el) {
@@ -67,44 +65,16 @@ export function analyzeIconInteractions({ recordBinding = null, limit = 30000 } 
             pressed: host.element.getAttribute('aria-pressed'), popup: host.element.getAttribute('aria-haspopup'),
             disabled: host.element.hasAttribute('disabled') || host.element.getAttribute('aria-disabled') === 'true',
             basis: host.basis } : null,
-          status: host ? 'requires-original-interaction-recording' : 'no-host-identified' };
-        rows.push(row); iconNodes.set(el, row);
-        if (host) hosts.set(host.element, row);
+          status: host ? 'control-host-associated' : 'no-host-identified' };
+        rows.push(row);
       }
       if (el.shadowRoot) walk(el.shadowRoot);
       if (truncated) return;
     }
   }
-  function scan() {
-    rows = []; scanned = 0; truncated = false; hosts.clear(); iconNodes.clear(); walk(document);
-  }
-  scan();
-  let lastScan = Date.now();
-  if (recordBinding) {
-    globalThis.__wrkIconObserver?.stop?.();
-    const types = ['click', 'pointerover', 'pointerout', 'focusin', 'focusout', 'keydown'];
-    const listener = event => {
-      if (event.type === 'keydown' && !['Enter', ' ', 'Escape', 'ArrowDown', 'ArrowUp'].includes(event.key)) return;
-      const locate = () => event.composedPath().find(el => hosts.has(el) || iconNodes.has(el));
-      let target = locate();
-      if (!target && (event.type === 'click' || Date.now() - lastScan >= 1000)) { scan(); lastScan = Date.now(); target = locate(); }
-      if (!target) return;
-      if (['pointerover', 'pointerout', 'focusin', 'focusout'].includes(event.type) && target.contains(event.relatedTarget)) return;
-      const row = hosts.get(target) || iconNodes.get(target);
-      const payload = { type: event.type, key: event.type === 'keydown' ? event.key : null,
-        selector: row.host?.selector || row.selector, iconName: row.iconName,
-        label: row.host?.label || null, timestamp: Date.now() };
-      // 监听原页面的实际事件，此观察器不阻止事件，也不自行修改页面。
-      Promise.resolve(globalThis[recordBinding](payload)).catch(() => {});
-    };
-    for (const type of types) document.addEventListener(type, listener, true);
-    globalThis.__wrkIconObserver = { stop: () => {
-      for (const type of types) document.removeEventListener(type, listener, true);
-    } };
-  }
+  walk(document);
   return { totalIcons: rows.length, scannedElements: scanned, truncated, icons: rows,
     interactiveHosts: new Set(rows.filter(r => r.host).map(r => r.host.selector)).size,
-    browserBehaviorVerified: false,
     limitations: ['装饰图标和自定义事件宿主可能无法仅凭 DOM 区分。',
       '闭合 Shadow DOM、跨源 iframe 和尚未渲染的图标不在本次检查范围。',
       '同一图标可能由多个候选 DOM 节点构成，候选数量不等于独立图形数量。',
