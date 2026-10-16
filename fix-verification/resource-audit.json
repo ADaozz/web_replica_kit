@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "scope": "PR-01 regression fixtures; no original-site resource audit completed",
+  "scope": "PR-01 resource regression fixtures and directed capture-reported counts; no full real-site resource audit completed",
   "fixtureChecks": {
     "svgSpritesFontsMasksImagesAndShadow": "PASSED",
     "staticScrollAndFormState": "PASSED",
@@ -26,5 +26,33 @@
     "comments": false,
     "javascriptObfuscation": false
   },
-  "remainingBoundary": "HTML/DOM sanitization and unused JS resource filtering remain PR-05 work."
+  "remainingBoundary": "HTML/DOM sanitization and unused JS resource filtering remain PR-05 work.",
+  "captureReportedResourceFailures": [
+    {
+      "siteId": "S01",
+      "count": 73,
+      "captureCompleted": true
+    },
+    {
+      "siteId": "S05",
+      "count": 8,
+      "captureCompleted": true
+    },
+    {
+      "siteId": "S06",
+      "count": null,
+      "captureCompleted": false
+    },
+    {
+      "siteId": "S09",
+      "count": 23,
+      "captureCompleted": true
+    },
+    {
+      "siteId": "S11",
+      "count": 13,
+      "captureCompleted": true
+    }
+  ],
+  "captureReportedResourceFailuresNote": "These are collector-reported counts, not independently confirmed missing source assets. Clone-request attribution remains unresolved; count null denotes no completed report."
 }

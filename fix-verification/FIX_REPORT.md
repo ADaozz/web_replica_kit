@@ -1,4 +1,4 @@
-# PR-01 修复记录（完整站点验收尚未完成）
+# PR-01 修复与复测记录（阶段门槛未通过）
 
 基线：`78b0521`；分支：`codex/interactive-replica-playwright-spec`。本次仅实施 PR-01，没有展开 PR-02～05。项目仍为 DOM/CSS/资源与真实交互证据采集器，没有增加离线交互 Runtime。
 
@@ -35,18 +35,51 @@ node scripts/benchmark-css-evidence.mjs css-rule-capture.mjs /tmp/wrk-after.json
 
 ## 回归
 
-五组命令全部通过，共 72 项测试，保留原有 68 项。详情见 regression-results.json。
+五组命令全部通过，共 73 项测试，保留原有 68 项。详情见 regression-results.json。
 
 - `npm test`：58 通过，含 Unicode/转义、原子写出失败与大于 V8 单字符串上限的聚合序列化。
 - `npm run test:e2e`：1 通过。
 - `npm run test:scroll`：2 通过。
 - `npm run test:interactions`：8 通过，包含新 manifest 文件引用的端到端检查。
-- `npm run test:css`：3 通过，含 inline / attributes、继承变量、important、Shadow DOM 和跨状态共享集合。
+- `npm run test:css`：4 通过，含 inline / attributes、继承变量、important、Shadow DOM 和跨状态共享集合。
+
+## 用户提供的最小复现
+
+已收到精确 20 站点矩阵和 8 个问题的最小复现包。ISSUE-001 / ISSUE-008 的原始 HTML 已纳入 tests/fixtures/css-repros，CSS 回归新增一项测试，覆盖全部三个变量规模与 inline 页面。原始 check.mjs 读取 Schema 1，不用于判断 Schema 2 的 manifest 与共享变量集合。
+
+| 同环境最小复现指标 | 78b0521 | 修复后 |
+| --- | ---: | ---: |
+| ISSUE-001 节点 | 822 | 822 |
+| 唯一规则/变量组合 | 201 | 201 |
+| 复制变量声明 | 361,220 | 0 |
+| 紧凑变量证据字节 | 53,681,311 | 261,299 |
+| ISSUE-008 真实及伪样式表记录 | 9 | 1 |
+| ISSUE-008 无 Header 记录 | 8 | 0 |
+
+以上变量体积下降 99.51%，口径为紧凑 collector 导出，不与上传日志中缩进后的文件字节直接比较。小页面只复现膨胀，不复现崩溃。样式来源和计算变量引用均由自动测试验证。
 
 ## 真实站点与阶段门槛
 
-Grok 原始报告、日志、截图和 20 站点精确矩阵尚未提供。仓库仅有旧的 8 站点矩阵；远端 PR 没有报告评论，基线没有 workflow runs，仓库没有 issue 报告。用户给出的 S02 与 S04 数字记录在 baseline.json 的 userReportedNotIndependentlyVerified 中，与本次合成复现分开。
+原矩阵保存为 MATRIX.md 和 sites.json。定向复测遵循第一轮 URL、1440×900、DOM 5000 / CSS 1000 预算、关闭探索和 900 秒上限。使用与原报告相同的 Node 20.19.2、Playwright 1.64.1、Chromium 156.0.8078.4。当前环境没有图形显示，使用 headless；8 GiB 内存上限、经环境代理访问，与原报告的 headed / 16 GB / 无代理不同。对照版本在当前同一环境运行，不能称为原环境逐项重现。
 
-**S01 / S05 / S06 / S09 / S11 的 CSS 崩溃修复验收尚未完成，全部 NOT_RETESTED。** 原始缺陷逐项状态见 confirmed-issues.json；PR-01 对应问题为 PARTIALLY_FIXED，没有因为本地测试通过而将真实站点缺陷标为 FIXED。
+S01 / S05 顺序运行修复后与 78b0521 基线，S06 / S09 / S11 验证修复后采集。S09/S11 与 S06 有时间重叠，这些耗时不用于性能比较。完成记录见 retest-evidence.json，原始采集和日志留在被忽略的 test-results/ 下的各复测目录中，不提交真实站点 DOM/CSS/资源正文。
 
-遵守用户要求“前一个 PR 未通过验收，不继续叠加下一阶段功能”，PR-02～05 暂不实施。继续推进需要原 20 站点的准确 URL、视口、采集预算、环境/浏览器版本，以及原报告与日志/截图的路径或可访问链接。敏感 HTML、Worker 支持、旧测试脚本字段和资源问题仍明确列为未解决，不能将这份报告视为全部修复完成。
+S01、S05 基线独立复现 Invalid string length。修复后的全部五站点结果如下，均未出现该错误或 OOM，但未完成的采集不能计为通过：
+
+| 站点 | 修复后结果 | 秒 | CSS 匹配节点 | 报告资源失败数 |
+| --- | --- | ---: | ---: | ---: |
+| S01 | CSS 写出完成 | 118.0 | 1000 | 73 |
+| S05 | CSS 写出完成 | 199.6 | 1000 | 8 |
+| S06 | 超时，未完成写出 | 900.8 | — | — |
+| S09 | CSS 写出完成 | 474.3 | 1006 | 23 |
+| S11 | CSS 写出完成 | 879.5 | 1022 | 13 |
+
+S06 达到 900 秒上限，由测试器终止，没有完成证据落盘。之后停止冗余基线队列；S06/S09/S11 的原始崩溃以用户报告为依据，未独立重跑其完整基线。S09/S11 与其他任务有时间重叠，所有耗时为单次记录，不能用于 PR-02 性能验收。当前 CPU 配额为 2 核。
+
+资源失败数不是独立确认的源站缺失数，克隆请求归因仍待 PR-05。进程退出 2（图标/资源验收未通过）仅可计为 CSS 采集完成，不能声称整站通过。节点预算截断已在证据中保留，不声称 CSS 全覆盖。
+
+复测工具：`node scripts/retest-css-sites.mjs BASELINE_DIR NODE_EXEC BROWSER_EXEC NEW_OUTPUT_DIR [SITE_IDS] [VERSIONS]`；默认两个版本，`VERSIONS=after` 可只验修复后版本。使用新输出目录，避免覆盖旧证据。当前环境的代理通过外部 browser wrapper 配置，不改变项目采集逻辑。
+
+在用户的 822 节点 fixture 上补充分段诊断：结构化快照约 4.1 秒，CSS 指纹约 0.04 秒，匹配样式采集约 23 秒，序列化约 3.8 秒。该样本约 31 秒，结果见 retest-evidence.json diagnosticProfiles；不能直接据此断言 S06 超时的具体阶段。
+
+遵守“前一个 PR 未通过验收，不继续叠加下一阶段功能”，S06 超时导致五站点门槛尚未通过，不实施 PR-02～05。动画、Hover、控件发现、Portal、远程 import 和 test-sites 旧字段仍未修复；不因这次两个 fixture 通过而变更其状态。

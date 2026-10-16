@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "scope": "synthetic fixture only",
+  "scope": "Original synthetic fixture plus supplied minimal reproductions and directed actual-site retests; scopes kept separate.",
   "measurementScopes": {
     "samples": 1,
     "size": "Compact serialization of collector exports; excludes HTML, assets, file manifests and formatting differences. Not live-site output directory sizes.",
@@ -44,5 +44,48 @@
     "changePercent": 8.06,
     "conclusion": "Not evidence for the S04 50% speed target; PR-02 is not implemented."
   },
-  "originalSiteComparison": "NOT_RETESTED"
+  "originalSiteComparison": {
+    "evidenceFile": "retest-evidence.json",
+    "independentlyReproducedBaselineCrashes": [
+      "S01",
+      "S05"
+    ],
+    "afterCompletedCss": [
+      "S01",
+      "S05",
+      "S09",
+      "S11"
+    ],
+    "afterIncomplete": [
+      "S06"
+    ],
+    "acceptance": "NOT_PASSED: S06 timed out at the original 900-second limit. No PR-02 performance claim."
+  },
+  "suppliedIssue001": {
+    "variableBytes": {
+      "before": 53681311,
+      "after": 261299,
+      "reductionPercent": 99.51
+    },
+    "totalCssBytes": {
+      "before": 74815266,
+      "after": 17811378,
+      "reductionPercent": 76.19
+    },
+    "nodePeakRssKiB": {
+      "before": 535144,
+      "after": 328056,
+      "reductionPercent": 38.7
+    },
+    "copiedVariableDeclarations": {
+      "before": 361220,
+      "after": 0,
+      "reductionPercent": 100.0
+    },
+    "preserved": {
+      "capturedNodes": 822,
+      "uniqueRuleVariablePairs": 201
+    },
+    "timingWarning": "Concurrent real-site retests; timing is not a controlled performance benchmark."
+  }
 }

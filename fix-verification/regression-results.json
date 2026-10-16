@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "baselineExistingTests": 68,
-  "totalTests": 72,
+  "totalTests": 73,
   "existingTestsRemoved": 0,
   "results": [
     {
@@ -38,16 +38,18 @@
     },
     {
       "command": "npm run test:css",
-      "tests": 3,
-      "pass": 3,
+      "tests": 4,
+      "pass": 4,
       "fail": 0,
       "skipped": 0,
       "result": "PASSED"
     }
   ],
   "notRun": [
-    "original 20-site matrix",
-    "directed S01/S05/S06/S09/S11 same-environment retests"
+    "full original 20-site matrix",
+    "native headed retests"
   ],
-  "reason": "Original matrix, artifacts and capture settings have not been supplied."
+  "reason": "All five directed after-fix retests finished: four completed CSS output and S06 timed out. Native headed mode and the full 20-site matrix remain untested. CSS suite rerun with supplied fixtures and npm test rerun; remaining suites passed at e24b6b4, production source unchanged.",
+  "unitAndFixtureNode": "24.19.0",
+  "directedRetestNode": "20.19.2"
 }
