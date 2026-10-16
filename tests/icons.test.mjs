@@ -1,0 +1,195 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { chromium } from 'playwright';
+import { makeSnapshotHtml } from '../capture.mjs';
+import { recordIconInteractions } from '../recorded-interactions.mjs';
+import { buildRecordedPreview } from '../recorded-interactions.mjs';
+
+const exec = promisify(execFile);
+const root = path.resolve(import.meta.dirname, '..');
+const css = `body { margin: 0; background: white; } svg, img, .icon { width: 40px; height: 40px; display: inline-block; }
+.external { background: url('../sprite.svg?theme=light#image') center/contain; }
+.mask { background: #128040; mask: url('../mask.svg#shape') center/contain no-repeat; }`;
+const integrity = 'sha256-' + crypto.createHash('sha256').update(css).digest('base64');
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+<symbol id="square" viewBox="0 0 40 40"><path fill="#e84820" d="M2 2h36v36H2z"/></symbol>
+<symbol id="circle" viewBox="0 0 40 40"><circle fill="#1b62ca" cx="20" cy="20" r="18"/></symbol>
+<path fill="#b345b3" d="M20 2 38 38H2z"/></svg>`;
+const mask = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle id="shape" fill="black" cx="20" cy="20" r="18"/></svg>';
+
+test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive offline preview', async () => {
+  const out = await fs.mkdtemp(path.join(os.tmpdir(), 'replica-icons-'));
+  const source = http.createServer((req, res) => {
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (pathname === '/redirect.svg') {
+      res.writeHead(302, { Location: '/sprite.svg?theme=light' }); res.end(); return;
+    }
+    if (pathname === '/nested/icons.css') {
+      res.setHeader('Content-Type', 'text/css'); res.end(css); return;
+    }
+    if (pathname === '/sprite.svg' || pathname === '/mask.svg') {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.end(pathname === '/sprite.svg' ? svg : mask); return;
+    }
+    res.setHeader('Content-Type', 'text/html');
+    res.end(`<!doctype html><html><head><base href="/nested/">
+<link rel="stylesheet" href="icons.css" integrity="${integrity}">
+<style>@import "icons.css"; .inline { background: url('../sprite.svg?theme=light#image') center/contain; }</style></head>
+<body><span class="ready" style="display:none">Hidden readiness match</span><span class="ready">Ready</span>
+<svg><use href="../sprite.svg?theme=light#square"/></svg>
+<svg xmlns:xlink="http://www.w3.org/1999/xlink"><use xlink:href="../sprite.svg?theme=light#circle"/></svg>
+<svg><use href="../redirect.svg#square"/></svg>
+<svg><defs><path id="inline" d="M2 2h36v36H2z"/></defs><use href="#inline" fill="#128040"/></svg>
+<img src="../sprite.svg?theme=light#image"><span class="icon external"></span>
+<span class="icon inline"></span><span class="icon mask"></span><x-icon></x-icon>
+<button id="toggle-panel" aria-expanded="false" aria-controls="panel">展开收起</button><section id="panel" hidden>面板内容</section>
+<button id="hover-tip" aria-describedby="tip">悬停提示</button><div id="tip" role="tooltip" hidden>提示内容</div>
+<div class="dropdown"><button id="toggle-menu" data-bs-toggle="dropdown" aria-expanded="false">菜单</button><div id="menu" class="dropdown-menu" hidden>菜单内容</div></div>
+<details id="details"><summary>原生展开</summary>详细内容</details>
+<script>customElements.define('x-icon', class extends HTMLElement {
+  constructor() { super(); const root = this.attachShadow({mode:'open'});
+    root.innerHTML = '<svg width="40" height="40"><circle class="glyph" cx="20" cy="20" r="18"/></svg>';
+    const sheet = new CSSStyleSheet(); sheet.replaceSync('.glyph { fill: #e84820; }');
+    root.adoptedStyleSheets = [sheet];
+  }
+});</script></body></html>`);
+  });
+  let preview;
+  let browser;
+  try {
+    await new Promise((resolve, reject) => { source.once('error', reject); source.listen(0, '127.0.0.1', resolve); });
+    const sourceUrl = `http://127.0.0.1:${source.address().port}`;
+    await exec(process.execPath, ['capture.mjs', '--url', sourceUrl + '/nested/', '--out', out,
+      '--ready-selector', '.ready', '--ready-timeout', '3000'], {
+      cwd: root, timeout: 60000
+    });
+    const html = await fs.readFile(path.join(out, 'index.html'), 'utf8');
+    const assets = JSON.parse(await fs.readFile(path.join(out, 'assets.json'), 'utf8'));
+    const icons = JSON.parse(await fs.readFile(path.join(out, 'icons.json'), 'utf8'));
+    assert.equal(icons.complete, true);
+    assert.equal(icons.shadowRoots, 1);
+    assert.ok(html.includes('shadowrootmode="open"'), 'shadow icon serialized');
+    assert.ok(html.includes('.glyph'), 'adopted shadow styles serialized');
+    const sprite = assets.find(asset => asset.url === sourceUrl + '/sprite.svg?theme=light');
+    assert.ok(sprite, 'sprite resource saved');
+    assert.ok(html.includes(`href="${sprite.localPath}#square"`));
+    assert.ok(html.includes(`xlink:href="${sprite.localPath}#circle"`));
+    assert.ok(html.includes('href="#inline"'), 'inline references preserved');
+    assert.ok(!html.includes('integrity='), 'rewritten CSS must not retain stale SRI');
+    assert.ok(!html.includes(sourceUrl), 'all fixture resource references localized');
+    assert.ok(html.includes('@import "assets/'), 'inline CSS imports localized');
+    const stylesheet = assets.find(asset => asset.type === 'stylesheet');
+    const savedCss = await fs.readFile(path.join(out, stylesheet.localPath), 'utf8');
+    assert.ok(savedCss.includes(`./${path.basename(sprite.localPath)}#image`));
+    assert.ok(!savedCss.includes(sourceUrl));
+
+    // 验证时关闭源站服务，任何残留远程依赖都应失败。
+    await new Promise(resolve => source.close(resolve));
+    preview = http.createServer(async (req, res) => {
+      try {
+        const filename = new URL(req.url, 'http://localhost').pathname;
+        const types = { '.svg': 'image/svg+xml', '.css': 'text/css', '.html': 'text/html' };
+        res.setHeader('Content-Type', types[path.extname(filename)] || 'text/html');
+        res.end(await fs.readFile(path.join(out, filename === '/' ? 'index.html' : filename)));
+      } catch { res.writeHead(404); res.end(); }
+    });
+    await new Promise(resolve => preview.listen(0, '127.0.0.1', resolve));
+    const localUrl = `http://127.0.0.1:${preview.address().port}`;
+    browser = await chromium.launch();
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+    const failures = [];
+    await page.route('**/*', route => {
+      if (new URL(route.request().url()).origin !== localUrl) {
+        failures.push(route.request().url()); return route.abort();
+      }
+      return route.continue();
+    });
+    page.on('requestfailed', req => failures.push(req.url()));
+    page.on('response', res => { if (res.status() >= 400) failures.push(res.url()); });
+    await page.goto(localUrl, { waitUntil: 'networkidle' });
+    assert.equal(await page.locator('x-icon svg').count(), 1, 'declarative shadow icon renders without scripts');
+    assert.equal(await page.locator('.external').evaluate(el => getComputedStyle(el).width), '40px');
+    const screenshot = await page.screenshot({ fullPage: true, animations: 'disabled' });
+    assert.deepEqual(failures, [], 'offline preview has no missing or remote requests');
+    assert.ok(screenshot.equals(await fs.readFile(path.join(out, 'screenshot.png'))),
+      'offline preview pixels match captured source, including all icons');
+    // 默认快照不根据属性猜测原站事件，只保留原生交互。
+    await page.locator('#toggle-panel').click();
+    assert.equal(await page.locator('#panel').isVisible(), false);
+    await page.locator('#details summary').click();
+    assert.equal(await page.locator('#details').getAttribute('open'), '');
+  } finally {
+    await browser?.close();
+    if (source.listening) await new Promise(resolve => source.close(resolve));
+    if (preview?.listening) await new Promise(resolve => preview.close(resolve));
+    await fs.rm(out, { recursive: true, force: true });
+  }
+});
+
+// 直接在本地源页面执行真实处理器，再关闭源站验证采集到的状态图。
+test('automatic icon probing captures source-defined layout and replays it offline', async () => {
+  const out = await fs.mkdtemp(path.join(os.tmpdir(), 'replica-source-states-'));
+  const source = http.createServer((_req, res) => {
+    res.setHeader('Content-Type', 'text/html');
+    res.end(`<!doctype html><html><head><style>
+      #panel { width: 271px; height: 60px; background: #36a; }
+      #tip { position: absolute; top: 100px; left: 40px; }
+    </style></head><body>
+      <button id="control" aria-expanded="true"><i data-icon-name="arbitrary-layout">界面</i></button>
+      <section id="panel">原页面板</section>
+      <button id="hover"><i data-icon-name="arbitrary-help">提示</i></button><div id="tip" hidden>原站提示</div>
+      <script>
+        control.onclick = () => {
+          const open = control.getAttribute('aria-expanded') !== 'true';
+          control.setAttribute('aria-expanded', String(open));
+          panel.style.width = open ? '271px' : '173px';
+        };
+        hover.onpointerenter = () => { tip.hidden = false; };
+        hover.onpointerleave = () => { tip.hidden = true; };
+      </script></body></html>`);
+  });
+  let browser;
+  try {
+    await new Promise((resolve, reject) => { source.once('error', reject); source.listen(0, '127.0.0.1', resolve); });
+    browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${source.address().port}`);
+    const recording = await recordIconInteractions({ page, out, settle: 100,
+      snapshot: async () => (await makeSnapshotHtml(page, {})).html });
+    assert.equal(recording.probe.automatic, true);
+    assert.equal(recording.probe.visitedHosts, 2);
+    assert.deepEqual(recording.errors, []);
+    assert.ok(recording.transitions.some(t => t.type === 'click' && t.selector === '#control'));
+    assert.ok(recording.transitions.some(t => t.type === 'pointerover' && t.selector === '#hover'));
+    await fs.writeFile(path.join(out, 'index.html'), buildRecordedPreview(recording));
+    await new Promise(resolve => source.close(resolve));
+    const { pathToFileURL } = await import('node:url');
+    await page.goto(pathToFileURL(path.join(out, 'index.html')).href);
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.locator('#control').click();
+    await page.waitForFunction(() => document.querySelector('#panel').style.width === '173px');
+    assert.equal(await page.locator('#panel').evaluate(el => el.getBoundingClientRect().width), 173);
+    await page.waitForTimeout(100);
+    await page.locator('#control').click();
+    await page.waitForFunction(() => document.querySelector('#panel').style.width === '271px');
+    await page.waitForTimeout(100);
+    await page.locator('#hover').hover();
+    await page.locator('#tip').waitFor({ state: 'visible' });
+    await page.waitForTimeout(100);
+    await page.mouse.move(-1, -1);
+    await page.locator('#tip').waitFor({ state: 'hidden' });
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser?.close();
+    if (source.listening) await new Promise(resolve => source.close(resolve));
+    await fs.rm(out, { recursive: true, force: true });
+  }
+});

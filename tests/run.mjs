@@ -1,0 +1,7 @@
+import './asset-urls.test.mjs';
+import './audit-snapshot.test.mjs';
+import './icon-capture.test.mjs';
+import './basic-interactions.test.mjs';
+import './icon-interactions.test.mjs';
+import './recorded-interactions.test.mjs';
+import './source-interaction-probe.test.mjs';
