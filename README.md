@@ -34,3 +34,5 @@ npm run test:css
 `scripts/verify-interactions.mjs` 用于比较原站与开发完成的前端。它不验证静态预览具有业务交互。不同 DOM 的控件须显式映射；真实 URL、属性、布局和样式结果不得被替换以通过验收。
 
 验证命令：`node scripts/verify-interactions.mjs SOURCE_URL TARGET_URL scenario.json verification`。映射格式见 [示例](docs/examples/frontend-scenario.json)。
+
+源证据格式为 Schema 2：CSS 观测按状态分文件，变量采用规则引用和共享计算值集合；JSON 使用有界紧凑写出。读取时沿 manifest 中的 file 引用访问，不假定 CSS snapshots 内嵌全部元素。

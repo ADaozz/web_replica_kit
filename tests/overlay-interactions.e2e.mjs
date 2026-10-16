@@ -60,6 +60,11 @@ test('capture exports static evidence without replay products',async()=>{
     for(const file of ['dom/tree.json','interactions/controls.json','interactions/states.json','interactions/transitions.json'])assert.ok((await fs.stat(path.join(output,file))).size>0);
     const read=async file=>JSON.parse(await fs.readFile(path.join(output,file),'utf8'));
     const states=await read('interactions/states.json'),matched=await read('css/matched-rules.json'),sheets=await read('css/stylesheets.json');
+    assert.equal(matched.schemaVersion,2);assert.equal(sheets.schemaVersion,2);
+    for(const reference of matched.snapshots){const snapshot=await read(reference.file);assert.equal(snapshot.id,reference.id);assert.ok(snapshot.elements.length);assert.equal('elements' in reference,false);}
+    const variables=await read('css/variables.json');assert.equal(variables.schemaVersion,2);
+    for(const state of variables.states){const data=await read(state.file);assert.equal(data.stateId,state.stateId);assert.ok(data.elements.every(e=>variables.resolvedSets.some(set=>set.id===e.resolvedSetId)));}
+    for(const reference of sheets.cssomSnapshots){assert.equal((await read(reference.file)).documentId,reference.documentId);assert.equal('sheets' in reference,false);}
     assert.ok(states.length>1);assert.ok(states.every(state=>!('snapshot' in state) && state.domRef && state.cssRef));
     for(const state of states){assert.ok((await read(state.domRef)).nodes.length);assert.ok(matched.snapshots.some(s=>s.id===state.cssRef.snapshotId));}
     const elements=await read('dom/elements.json'),tree=await read('dom/tree.json');

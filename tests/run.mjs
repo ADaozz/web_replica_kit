@@ -9,3 +9,4 @@ import './interaction-explorer.test.mjs';
 import './snapshot-resources.test.mjs';
 import './rule-state-linker.test.mjs';
 import './evidence-output.test.mjs';
+import './json-writer.test.mjs';

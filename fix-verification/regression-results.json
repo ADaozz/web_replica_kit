@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 2,
+  "baselineExistingTests": 68,
+  "totalTests": 72,
+  "existingTestsRemoved": 0,
+  "results": [
+    {
+      "command": "npm test",
+      "tests": 58,
+      "pass": 58,
+      "fail": 0,
+      "skipped": 0,
+      "result": "PASSED"
+    },
+    {
+      "command": "npm run test:e2e",
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0,
+      "result": "PASSED"
+    },
+    {
+      "command": "npm run test:scroll",
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "skipped": 0,
+      "result": "PASSED"
+    },
+    {
+      "command": "npm run test:interactions",
+      "tests": 8,
+      "pass": 8,
+      "fail": 0,
+      "skipped": 0,
+      "result": "PASSED"
+    },
+    {
+      "command": "npm run test:css",
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0,
+      "result": "PASSED"
+    }
+  ],
+  "notRun": [
+    "original 20-site matrix",
+    "directed S01/S05/S06/S09/S11 same-environment retests"
+  ],
+  "reason": "Original matrix, artifacts and capture settings have not been supplied."
+}

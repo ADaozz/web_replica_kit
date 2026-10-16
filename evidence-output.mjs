@@ -1,7 +1,8 @@
+import {EVIDENCE_SCHEMA_VERSION} from './evidence-schema.mjs';
 // Data manifest only; paths are relative to the capture output directory.
 export function buildDomTree(snapshot) {
   const known=new Set(snapshot.nodes.map(n=>n.elementId));
-  return {schemaVersion:1,frames:snapshot.frames.map(frame=>({index:frame.index,documentId:frame.documentId || null,
+  return {schemaVersion:EVIDENCE_SCHEMA_VERSION,frames:snapshot.frames.map(frame=>({index:frame.index,documentId:frame.documentId || null,
     roots:snapshot.nodes.filter(n=>n.frameIndex===frame.index && !known.has(n.parentElementId)).map(n=>n.elementId)})),
     nodes:snapshot.nodes.map(n=>({elementId:n.elementId,parentElementId:n.parentElementId,
       children:(n.childElementIds || []).filter(id=>known.has(id)),shadowChildren:(n.shadowChildElementIds || []).filter(id=>known.has(id))}))};
@@ -21,5 +22,5 @@ export function buildEvidenceManifest(exploration) {
   const controls=exploration.controls.map(control=>({...control,elementRefs:observed.flatMap(observation=>observation.snapshot.nodes
     .filter(node=>node.selector===control.selector && node.frameIndex===(control.frameIndex || 0) && (!control.frameUrl || observation.snapshot.frames[node.frameIndex]?.url===control.frameUrl))
     .map(node=>({observationId:observation.id,elementId:node.elementId,scopeId:node.scopeId})))}));
-  return {schemaVersion:1,states,controls,observations:[...references.values()],documents:observed.map(o=>({file:references.get(o.id).domRef,snapshot:o.snapshot})),tree:buildDomTree(exploration.states[0].snapshot)};
+  return {schemaVersion:EVIDENCE_SCHEMA_VERSION,states,controls,observations:[...references.values()],documents:observed.map(o=>({file:references.get(o.id).domRef,snapshot:o.snapshot})),tree:buildDomTree(exploration.states[0].snapshot)};
 }

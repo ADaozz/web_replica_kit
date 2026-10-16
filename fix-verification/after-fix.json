@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 2,
+  "scope": "PR-01 only",
+  "sourceSha256": {
+    "css-rule-capture.mjs": "812b138d776290dd33a61fdaa1e296b03ae9e8ec75e0d28486b5f82b7b5cb35b",
+    "json-writer.mjs": "5a30a6222b6751826474d030a6a3ac59acd3dd0d48baef0ce6abf0323f7eec86",
+    "css-evidence-output.mjs": "47465600c29626081ff8f1a8150a13e963c4f231bfc57af3cbbe8719d01ed579",
+    "evidence-schema.mjs": "fed6d34df043f39dbae03d3713aeffc8440102c9b2212aab944de786b5097484"
+  },
+  "measurementScopes": {
+    "samples": 1,
+    "size": "Compact serialization of collector exports; excludes HTML, assets, file manifests and formatting differences. Not live-site output directory sizes.",
+    "memory": "Peak RSS of the Node collector and serialization process, sampled before metric analysis; excludes Chromium.",
+    "timing": "Collector plus serialization in a synthetic fixture. Single sample; no site performance conclusion."
+  },
+  "syntheticFixture": {
+    "kind": "synthetic-css-reproduction",
+    "fixture": {
+      "elements": 370,
+      "customProperties": 223,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "maxCssNodes": 500
+    },
+    "node": "v24.19.0",
+    "browser": "156.0.8078.4",
+    "schemaVersion": 2,
+    "capturedNodes": 373,
+    "stylesheetRecords": 1,
+    "headerlessStylesheetRecords": 0,
+    "copiedVariableDeclarations": 0,
+    "uniqueRuleVariablePairs": 223,
+    "resolvedSets": 1,
+    "variableBytes": 107537,
+    "totalCssBytes": 6047361,
+    "durationMs": 2951,
+    "nodePeakRssKiB": 307524,
+    "memoryScope": "Node collector process only; excludes Chromium"
+  },
+  "realSiteStatus": "NOT_RETESTED",
+  "nextStageStarted": false,
+  "gate": "Original crash-site retests pending; original run matrix and artifacts missing."
+}

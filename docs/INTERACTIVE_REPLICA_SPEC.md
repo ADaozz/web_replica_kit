@@ -16,6 +16,9 @@ output/
   css/stylesheets.json
   css/matched-rules.json
   css/variables.json
+  css/states/*.json
+  css/cssom/*.json
+  css/variables/*.json
   interactions/controls.json
   interactions/states.json
   interactions/observations.json
@@ -62,4 +65,6 @@ output/
 
 `relations/state-style.json` 按转换记录 trigger、显式 ARIA / popover 目标、属性和结构差异、前后真实匹配规则、增删规则及来源。简单选择器中直接依赖变化属性的部分可标记为 `selector-dependency-observed`；这不证明应用处理器的源码或其他视觉变化的因果。无显式目标关系、缺失匹配 CSS、未知节点对应等均保留 `unresolved`。CSSOM 补充规则也有 ID，但不会猜测它与某个 CDP 规则的对应。
 
-字段约定、读取路径及外部前端验收示例见 [Coding Agent 指南](CODING_AGENT_GUIDE.md)。所有输出统一使用 report.schemaVersion = 1；状态保存引用，不嵌入整页 HTML。
+字段约定、读取路径及外部前端验收示例见 [Coding Agent 指南](CODING_AGENT_GUIDE.md)。源证据交付统一使用 report.schemaVersion = 2；状态保存引用，不嵌入整页 HTML。
+
+CSS 状态、CSSOM 和变量元素集合逐观测分文件，顶层 manifest 保存引用。变量声明仅在规则表中保存，元素引用 sourceRuleIds，去重计算值由 resolvedSetId 指向全局 resolvedSets。JSON 紧凑、有界写出；原始 CSS 文本、作用域、条件与源位置不精简。详细查询顺序见 Coding Agent 指南。

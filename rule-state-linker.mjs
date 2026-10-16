@@ -1,3 +1,4 @@
+import {EVIDENCE_SCHEMA_VERSION} from './evidence-schema.mjs';
 // Associate facts recorded by the browser. No component or behavior synthesis.
 import { correspondElements } from './state-diff.mjs';
 
@@ -62,5 +63,5 @@ export function linkRuleStates({states=[],transitions=[],observations=[],css={}}
     return {...base,trigger:ref(trigger),declaredTargets:declared,status:trigger && targets.some(t=>t.status==='observed')?'observed':'unresolved',
       reason:trigger?targets.length?null:'no element change observed':'trigger missing or ambiguous',targets};
   });
-  return {schemaVersion:1,policy:'observed facts and declared DOM relations; causal behavior is not inferred',relations};
+  return {schemaVersion:EVIDENCE_SCHEMA_VERSION,policy:'observed facts and declared DOM relations; causal behavior is not inferred',relations};
 }

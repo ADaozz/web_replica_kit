@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "scope": "PR-01 regression fixtures; no original-site resource audit completed",
+  "fixtureChecks": {
+    "svgSpritesFontsMasksImagesAndShadow": "PASSED",
+    "staticScrollAndFormState": "PASSED",
+    "missingResourceRecording": "PASSED",
+    "originalStylesheetTextConditionsOrderAndSources": "PASSED"
+  },
+  "originalSiteIssues": [
+    {
+      "id": "S17-external-import",
+      "status": "NOT_RETESTED"
+    },
+    {
+      "id": "clone-generated-image-requests",
+      "status": "NOT_RETESTED"
+    },
+    {
+      "id": "static-iframe-export",
+      "status": "NOT_RETESTED"
+    }
+  ],
+  "filtersAdded": {
+    "base64": false,
+    "comments": false,
+    "javascriptObfuscation": false
+  },
+  "remainingBoundary": "HTML/DOM sanitization and unused JS resource filtering remain PR-05 work."
+}

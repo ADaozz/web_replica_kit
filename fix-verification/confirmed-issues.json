@@ -1,0 +1,345 @@
+{
+  "schemaVersion": 2,
+  "evidencePolicy": "Reported site issues are not marked FIXED based on local tests. Original Grok artifacts are missing.",
+  "issues": [
+    {
+      "id": "css-variable-duplication",
+      "sites": [
+        "S02"
+      ],
+      "status": "PARTIALLY_FIXED",
+      "stage": "PR-01",
+      "evidence": "Synthetic inherited declarations reproduced; removed per-element declaration copies; actual S02 not retested.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "inline-pseudo-stylesheets",
+      "sites": [
+        "S02"
+      ],
+      "status": "PARTIALLY_FIXED",
+      "stage": "PR-01",
+      "evidence": "Synthetic headerless records 373 to 0; real inline, inherited and presentation styles retain owner IDs; actual S02 not retested.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "large-json-crashes",
+      "sites": [
+        "S01",
+        "S05",
+        "S06",
+        "S09",
+        "S11"
+      ],
+      "status": "PARTIALLY_FIXED",
+      "stage": "PR-01",
+      "evidence": "Bounded writer and state files implemented; aggregate above V8 string limit tested. Original five crash sites not retested.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "repeated-full-css-and-cssom",
+      "sites": [
+        "S04"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-02",
+      "evidence": "Incremental capture and CSSOM cache are not implemented.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "computed-style-redundancy",
+      "sites": [
+        "S04"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-02",
+      "evidence": "Custom property values deduplicated by PR-01; standard full computed properties remain unchanged.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "dom-order-node-budget",
+      "sites": [],
+      "status": "UNRESOLVED",
+      "stage": "PR-02",
+      "evidence": "Priority selection and conservative invalidation are not implemented.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "animation-restoration-drift",
+      "sites": [
+        "S02"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-03",
+      "evidence": "Behavior/render separation and animation settling changes not implemented.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "hover-restoration-side-effects",
+      "sites": [
+        "S01"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-03",
+      "evidence": "Safe pointer restoration changes not implemented.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "bfs-abort-after-control-failure",
+      "sites": [
+        "S01",
+        "S02",
+        "S09"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-03",
+      "evidence": "Trusted isolated-page recovery not implemented; existing fail-stop behavior retained.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "duplicate-inverse-transitions",
+      "sites": [],
+      "status": "UNRESOLVED",
+      "stage": "PR-03",
+      "evidence": "Transition normalization with observation references not implemented.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "safe-control-discovery",
+      "sites": [
+        "S03",
+        "S06"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-04",
+      "evidence": "Safety eligibility and additional scoped controls unchanged.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "portal-and-positioning-evidence",
+      "sites": [
+        "S03",
+        "S04"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-04",
+      "evidence": "Additional insertion and positioning relationships not implemented.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "worker-network-boundary",
+      "sites": [
+        "S06"
+      ],
+      "status": "NOT_RETESTED",
+      "stage": "PR-04",
+      "evidence": "Worker restriction remains in place; no safety relaxation or new support claimed.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "test-sites-old-unresolved-field",
+      "sites": [],
+      "status": "UNRESOLVED",
+      "stage": "PR-05",
+      "evidence": "Confirmed code access at scripts/test-sites.mjs:150; not changed before prior stage gates pass.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "sensitive-html-values",
+      "sites": [
+        "S11"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-05",
+      "evidence": "Unified pre-serialization sanitization not implemented; do not publish real captures.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "external-css-import",
+      "sites": [
+        "S17"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-05",
+      "evidence": "Preview import handling unchanged; original CSS not modified.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "clone-generated-image-requests",
+      "sites": [],
+      "status": "UNRESOLVED",
+      "stage": "PR-05",
+      "evidence": "Request attribution during HTML clone unchanged.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "positional-locators",
+      "sites": [
+        "S07",
+        "S10"
+      ],
+      "status": "UNRESOLVED",
+      "stage": "PR-05",
+      "evidence": "Cross-load stable locator improvements not implemented.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "static-iframe-contents",
+      "sites": [],
+      "status": "UNRESOLVED",
+      "stage": "PR-05",
+      "evidence": "No inaccessible iframe content fabricated; static export unchanged.",
+      "realSiteStatus": "NOT_RETESTED"
+    },
+    {
+      "id": "unused-javascript-resource-bodies",
+      "sites": [],
+      "status": "UNRESOLVED",
+      "stage": "PR-05",
+      "evidence": "No script-source filtering added; dependency audit pending.",
+      "realSiteStatus": "NOT_RETESTED"
+    }
+  ],
+  "siteRetests": [
+    {
+      "id": "S01",
+      "name": "Tabler",
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S02",
+      "name": "Bootstrap",
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S03",
+      "name": "Shoelace",
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S04",
+      "name": "shadcn/ui",
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S05",
+      "name": "Material UI",
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S06",
+      "name": "Ant Design",
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S07",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S08",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S09",
+      "name": "Stripe",
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S10",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S11",
+      "name": "GitHub Explore",
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S12",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S13",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S14",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S15",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S16",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S17",
+      "name": "CSS Zen Garden",
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S18",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S19",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    },
+    {
+      "id": "S20",
+      "name": null,
+      "url": null,
+      "status": "NOT_RETESTED",
+      "reason": "Exact URL and original capture settings unavailable; no replacement URL assumed."
+    }
+  ]
+}

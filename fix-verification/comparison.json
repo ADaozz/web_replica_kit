@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 2,
+  "scope": "synthetic fixture only",
+  "measurementScopes": {
+    "samples": 1,
+    "size": "Compact serialization of collector exports; excludes HTML, assets, file manifests and formatting differences. Not live-site output directory sizes.",
+    "memory": "Peak RSS of the Node collector and serialization process, sampled before metric analysis; excludes Chromium.",
+    "timing": "Collector plus serialization in a synthetic fixture. Single sample; no site performance conclusion."
+  },
+  "changes": {
+    "variableBytes": {
+      "before": 24289426,
+      "after": 107537,
+      "reductionPercent": 99.56
+    },
+    "totalCssBytes": {
+      "before": 31990514,
+      "after": 6047361,
+      "reductionPercent": 81.1
+    },
+    "nodePeakRssKiB": {
+      "before": 408352,
+      "after": 307524,
+      "reductionPercent": 24.69
+    },
+    "copiedVariableDeclarations": {
+      "before": 166358,
+      "after": 0,
+      "reductionPercent": 100.0
+    },
+    "headerlessStylesheetRecords": {
+      "before": 373,
+      "after": 0,
+      "reductionPercent": 100.0
+    }
+  },
+  "preserved": {
+    "capturedNodes": true,
+    "uniqueRuleVariablePairs": true
+  },
+  "durationMs": {
+    "before": 2731,
+    "after": 2951,
+    "changePercent": 8.06,
+    "conclusion": "Not evidence for the S04 50% speed target; PR-02 is not implemented."
+  },
+  "originalSiteComparison": "NOT_RETESTED"
+}

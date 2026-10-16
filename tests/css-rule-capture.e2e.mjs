@@ -63,7 +63,9 @@ test('CDP captures source boundaries, matched rules, CSSOM changes, conditions, 
     assert.ok(cssom.scopes.some(s=>s.kind==='open-shadow' && s.adoptedStyleSheets.length===1 && s.styleSheets.length===1));
     const shadow=result.snapshots[1].elements.find(n=>n.selector==='#host >>> #inside');assert.ok(shadow?.matchedRules.length);assert.equal(shadow.computedStyle.color,'rgb(9, 8, 7)');
     assert.ok(result.snapshots[1].elements.some(n=>n.frameIndex===1 && n.selector==='#framed' && !n.missing),'in-process iframe CDP mapping');
-    assert.ok(result.variables.some(v=>v.elementId===node.elementId && v.references.some(r=>r.name==='--accent')));
+    const variable=result.variables.elements.find(v=>v.elementId===node.elementId && v.stateId==='open');
+    assert.ok(variable.sourceRuleIds.some(id=>result.rules.find(r=>r.id===id).variableReferences.some(r=>r.name==='--accent')));
+    assert.equal(result.variables.resolvedSets.find(set=>set.id===variable.resolvedSetId).values['--accent'],'rgb(20, 40, 60)');
     assert.ok(result.missing.some(m=>m.kind==='cssom-rules-inaccessible'),'cross-origin CSSOM restriction is explicit');
     assert.ok(result.stylesheets.some(s=>s.header?.sourceURL===foreign.url+'/foreign.css' && s.versions[0]?.text.includes('font-weight')),'CDP supplements cross-origin CSSOM gaps');
     assert.deepEqual(cssom.scopes[0].styleSheets.slice(0,2),cssom.sheets.filter(s=>s.href).slice(0,2).map(s=>s.id));
@@ -83,4 +85,39 @@ test('CSS budgets and absent CDP sessions produce explicit missing evidence',asy
     const unavailable=await createCssRuleCollector({context(){throw new Error('CDP not available');},frames:()=>[]});
     assert.ok(unavailable.export().missing.some(m=>m.kind==='cdp-unavailable'));await unavailable.dispose();
   }finally {await browser.close();}
+});
+
+
+test('inherited variables share resolved sets and inline/presentation styles never create fake stylesheets',async()=>{
+  const browser=await chromium.launch();let collector;
+  try {
+    const page=await browser.newPage();
+    await page.setContent('<style>:root{--accent:rgb(1, 2, 3)!important}.item{color:var(--accent)}</style><main id="parent" style="--local:7px"><button class="item" id="a" style="padding:var(--local)">A</button><button class="item" id="b" style="">B</button><svg><path id="path" fill="red"/></svg></main>');
+    await page.evaluate(()=>{const host=document.createElement('x-variable');host.id='variable-host';document.body.append(host);host.attachShadow({mode:'open'}).innerHTML='<style>:host{--local:7px;--accent:rgb(1, 2, 3)}button{color:var(--accent)}</style><button id="inside">Shadow</button>';});
+    collector=await createCssRuleCollector(page);const snapshot=await captureStructuredState(page);
+    await collector.fingerprint(snapshot);await collector.capture(snapshot,'first');await collector.fingerprint(snapshot);await collector.capture(snapshot,'second');
+    const data=collector.export(),byId=new Map(data.rules.map(r=>[r.id,r]));
+    assert.equal(data.schemaVersion,2);assert.equal(data.stylesheets.length,2);assert.ok(data.stylesheets.every(s=>s.header));
+    assert.equal(data.missing.some(m=>m.kind==='stylesheet-header-unavailable'),false);
+    const a=snapshot.nodes.find(n=>n.selector==='#a'),b=snapshot.nodes.find(n=>n.selector==='#b');
+    const entries=data.variables.elements.filter(e=>e.elementId===a.elementId || e.elementId===b.elementId);
+    assert.ok(entries.every(e=>e.resolvedSetId===entries[0].resolvedSetId));
+    assert.equal(data.variables.resolvedSets.find(set=>set.id===entries[0].resolvedSetId).values['--local'],'7px');
+    assert.ok(entries.every(e=>!('declarations' in e) && !('computed' in e) && !('references' in e)));
+    for(const entry of entries)assert.ok(entry.sourceRuleIds.every(id=>byId.has(id)));
+    assert.ok(entries[0].sourceRuleIds.some(id=>byId.get(id).declarations.some(p=>p.name==='--accent' && p.important===true)));
+    const matches=data.snapshots[0].elements.find(e=>e.elementId===a.elementId);
+    assert.equal(matches.resolvedVariableSetId,entries[0].resolvedSetId);assert.equal('--accent' in matches.computedStyle,false);
+    assert.equal(byId.get(matches.inlineRuleId).source.elementId,a.elementId);
+    assert.equal(byId.get(matches.inlineRuleId).source.stylesheetId,null);
+    assert.equal(data.snapshots[0].elements.find(e=>e.elementId===b.elementId).inlineRuleId,null);
+    const inherited=matches.inherited.find(e=>e.inlineRuleId);
+    assert.equal(byId.get(inherited.inlineRuleId).source.elementId,snapshot.nodes.find(n=>n.selector==='#parent').elementId);
+    const shadow=snapshot.nodes.find(n=>n.selector==='#variable-host >>> #inside');
+    const shadowVars=data.variables.elements.find(e=>e.elementId===shadow.elementId);
+    assert.equal(shadowVars.resolvedSetId,entries[0].resolvedSetId);assert.notEqual(shadowVars.scopeId,entries[0].scopeId);
+    assert.notDeepEqual(shadowVars.sourceRuleIds,entries[0].sourceRuleIds);
+    assert.ok(data.rules.every(r=>!('style' in r.protocol)));
+    assert.ok(data.rules.some(r=>r.source.kind==='attributes' && r.source.elementId===snapshot.nodes.find(n=>n.selector==='#path').elementId));
+  }finally{await collector?.dispose();await browser.close();}
 });

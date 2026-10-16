@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import {EVIDENCE_SCHEMA_VERSION} from './evidence-schema.mjs';
+import {writeJsonFile} from './json-writer.mjs';
+import {writeCssEvidence} from './css-evidence-output.mjs';
 import { buildEvidenceManifest } from './evidence-output.mjs';
 import { linkRuleStates } from './rule-state-linker.mjs';
 import { createCssRuleCollector } from './css-rule-capture.mjs';
@@ -589,39 +592,33 @@ async function main() {
       }
     }
     snapshot.html = inlineSpriteSymbols(snapshot.html, spriteSources);
-    const writeJson = async (file, data) => {
-      const full = path.join(opts.out, file);
-      await fs.mkdir(path.dirname(full), { recursive: true });
-      await fs.writeFile(full, JSON.stringify(data, null, 2));
-    };
+    const writeJson=(file,data)=>writeJsonFile(path.join(opts.out,file),data);
     const resourceFailureEvidence=[...resourceFailures.values()].map(item=>({...item,resolved:Boolean(recorded.has(item.url) || recorded.has(redirectAliases.get(item.url)))}));
     const manifest=buildEvidenceManifest(exploration);
-    await Promise.all(manifest.documents.map(item=>writeJson(item.file,item.snapshot)));
+    for(const item of manifest.documents)await writeJson(item.file,item.snapshot);
+    await writeCssEvidence(opts.out,cssEvidence,cssResourceFiles);
     await fs.mkdir(path.join(opts.out,'dom'),{recursive:true});
-    await Promise.all([
-      fs.writeFile(path.join(opts.out, 'index.html'), snapshot.html),
-      writeJson('dom/icon-hosts.json',iconInteractions),
-      fs.writeFile(path.join(opts.out,'dom/original.html'),originalHtml),
-      writeJson('layout.json', { schemaVersion:1,viewport: layout.viewport, pageSize: layout.pageSize,frames:layout.frames,
-        capped: layout.capped, nodes: layout.nodes }),
-      writeJson('dom/tree.json', manifest.tree),
-      writeJson('dom/elements.json',exploration.states[0].snapshot.nodes),
-      writeJson('assets.json', [...recorded.values()]),
-      writeJson('icons.json', iconReport),
-      writeJson('css/stylesheets.json',{schemaVersion:1,stylesheets:cssEvidence.stylesheets,resourceFiles:cssResourceFiles,cssomSnapshots:cssEvidence.cssomSnapshots,missing:cssEvidence.missing,budgets:cssEvidence.budgets}),
-      writeJson('css/matched-rules.json',{schemaVersion:1,rules:cssEvidence.rules,snapshots:cssEvidence.snapshots}),
-      writeJson('css/variables.json',{schemaVersion:1,elements:cssEvidence.variables}),
-      writeJson('relations/state-style.json',exploration.relations || linkRuleStates({...exploration,css:cssEvidence})),
-      writeJson('interactions/controls.json',manifest.controls),
-      writeJson('interactions/states.json',manifest.states),
-      writeJson('interactions/observations.json',manifest.observations),
-      writeJson('interactions/transitions.json',exploration?.transitions || []),
-      writeJson('interactions/failures.json',exploration?.failures || []),
-      writeJson('interactions/restorations.json',exploration?.restorations || []),
-      writeJson('interactions/overlay-diagnostics.json',exploration?.overlayDiagnostics || []),
-      writeJson('routes.json',{initialRoute:baselineSnapshot.route,routes:exploration?.routes || []}),
-      writeJson('report.json', {
-        schemaVersion:1,capturedAt: new Date().toISOString(), sourceUrl: opts.url,
+    await fs.writeFile(path.join(opts.out,'index.html'),snapshot.html);
+    await fs.writeFile(path.join(opts.out,'dom/original.html'),originalHtml);
+    const documents=[
+      ['dom/icon-hosts.json',iconInteractions],
+      ['layout.json', { schemaVersion:EVIDENCE_SCHEMA_VERSION,viewport: layout.viewport, pageSize: layout.pageSize,frames:layout.frames,
+        capped: layout.capped, nodes: layout.nodes }],
+      ['dom/tree.json', manifest.tree],
+      ['dom/elements.json',exploration.states[0].snapshot.nodes],
+      ['assets.json', [...recorded.values()]],
+      ['icons.json', iconReport],
+      ['relations/state-style.json',exploration.relations || linkRuleStates({...exploration,css:cssEvidence})],
+      ['interactions/controls.json',manifest.controls],
+      ['interactions/states.json',manifest.states],
+      ['interactions/observations.json',manifest.observations],
+      ['interactions/transitions.json',exploration?.transitions || []],
+      ['interactions/failures.json',exploration?.failures || []],
+      ['interactions/restorations.json',exploration?.restorations || []],
+      ['interactions/overlay-diagnostics.json',exploration?.overlayDiagnostics || []],
+      ['routes.json',{initialRoute:baselineSnapshot.route,routes:exploration?.routes || []}],
+      ['report.json', {
+        schemaVersion:EVIDENCE_SCHEMA_VERSION,capturedAt: new Date().toISOString(), sourceUrl: opts.url,
         finalUrl: page.url(),settledRoute:baselineSnapshot.route, captureDiagnostics,
         iconPolicy: iconReport.policy, iconsComplete: iconReport.complete,
         missingIcons: iconReport.missing.length,resourceFailures:resourceFailureEvidence,missingResources:resourceFailureEvidence.filter(item=>!item.resolved),
@@ -642,8 +639,9 @@ async function main() {
           'Only visited states and CSS within the recorded budgets are represented; resources in unvisited states or inactive conditions may remain unresolved.',
           'Do not publish captured files unless you have the required rights.'
         ]
-      })
-    ]);
+      }]
+    ];
+    for(const [file,data] of documents)await writeJson(file,data);
     console.log(`Saved ${layout.capturedNodes} nodes, ${recorded.size} assets to ${opts.out}`);
     console.log('Local preview: node serve.mjs ' + opts.out);
     if (!iconReport.complete) {

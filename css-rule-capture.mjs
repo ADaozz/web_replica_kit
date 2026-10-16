@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {EVIDENCE_SCHEMA_VERSION} from './evidence-schema.mjs';
 
 const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex').slice(0, 24);
 
@@ -64,7 +65,7 @@ function resolveElements(selectors) {
 }
 
 export async function createCssRuleCollector(page, { maxNodes = 1000, maxRules = 20000, maxSheetBytes = 12*1024*1024 } = {}) {
-  const sheets=new Map(), rules=new Map(), snapshots=[], cssomSnapshots=[], variables=[], missing=[];
+  const sheets=new Map(), rules=new Map(), snapshots=[], cssomSnapshots=[], variableElements=[], resolvedVariableSets=new Map(), missing=[];
   const sessions=new Map(), frameSessions=new Map();
   let main=null, revision=null, captureSequence=0;
   const missingKeys=new Set();
@@ -109,21 +110,26 @@ export async function createCssRuleCollector(page, { maxNodes = 1000, maxRules =
   }
   async function sheetVersion(info,styleSheetId,stateId) {
     const id=`${info.scope}:sheet:${styleSheetId}`;
+    const header=info.headers.get(styleSheetId) || null;
     let record=sheets.get(id);
-    if (!record) {
-      record={id,channel:'cdp',header:info.headers.get(styleSheetId) || null,versions:[]};sheets.set(id,record);
-      if (!record.header) gap({kind:'stylesheet-header-unavailable',stylesheetId:id});
-    }
+    // Only real stylesheet headers establish records before a successful text read.
+    if(!record && header){record={id,channel:'cdp',header,versions:[]};sheets.set(id,record);}
     try {
       const {text}=await info.session.send('CSS.getStyleSheetText',{styleSheetId});
-      if (Buffer.byteLength(text)>maxSheetBytes) {gap({kind:'stylesheet-byte-budget',stylesheetId:id,limit:maxSheetBytes});return {id,versionId:null};}
+      if(Buffer.byteLength(text)>maxSheetBytes){gap({kind:'stylesheet-byte-budget',stylesheetId:id,limit:maxSheetBytes});return {id:record?id:null,versionId:null};}
+      if(!record){record={id,channel:'cdp',header:null,headerStatus:'not-exposed',versions:[]};sheets.set(id,record);}
       const contentHash=hash(text),versionId=`${id}:${contentHash}`;
       let version=record.versions.find(v=>v.id===versionId);
-      if (!version) {version={id:versionId,contentHash,text,states:[]};record.versions.push(version);}
-      if (stateId && !version.states.includes(stateId)) version.states.push(stateId);
+      if(!version){version={id:versionId,contentHash,text,states:[]};record.versions.push(version);}
+      if(stateId && !version.states.includes(stateId))version.states.push(stateId);
       return {id,versionId};
-    } catch(error) {gap({kind:'stylesheet-text-unavailable',stylesheetId:id,reason:String(error.message)});return {id,versionId:null};}
+    }catch(error){
+      if(!header)gap({kind:'stylesheet-header-unavailable',protocolStyleSheetId:styleSheetId,reason:String(error.message)});
+      gap({kind:'stylesheet-text-unavailable',stylesheetId:record?id:null,protocolStyleSheetId:styleSheetId,reason:String(error.message)});
+      return {id:record?id:null,versionId:null};
+    }
   }
+
   async function fingerprint(snapshot) {
     const frames=[];
     for (const [index,frame] of page.frames().entries()) {
@@ -171,16 +177,26 @@ export async function createCssRuleCollector(page, { maxNodes = 1000, maxRules =
       const nodes=candidates.slice(0,maxNodes), group=`wrk-css-${++captureSequence}`;
       const versionCache=new Map();
       async function normalizeRule(rule,kind='matched',owner=null) {
-        const style=rule.style || {}, styleSheetId=rule.styleSheetId || style.styleSheetId;
+        const style=rule.style || {}, elementStyle=['inline','attributes'].includes(kind) || ['inline','attributes'].includes(rule.origin);
+        if(elementStyle && !(style.cssProperties?.length || style.shorthandEntries?.length))return null;
+        const styleSheetId=elementStyle?null:rule.styleSheetId || style.styleSheetId;
         let source={kind:rule.origin || kind,stylesheetId:null,versionId:null,url:null,range:rule.selectorList?.selectors?.[0]?.range || style.range || null,selectorRange:rule.selectorList?.selectors?.[0]?.range || null,declarationsRange:style.range || null};
-        if (styleSheetId) {
+        if (styleSheetId && !(rule.origin==='user-agent' && !info.headers.has(styleSheetId))) {
           if (!versionCache.has(styleSheetId)) versionCache.set(styleSheetId,await sheetVersion(info,styleSheetId,stateId));
           const version=versionCache.get(styleSheetId), sheet=sheets.get(version.id);
           source={...source,stylesheetId:version.id,versionId:version.versionId,url:sheet?.header?.sourceURL || null,headerRange:sheet?.header ? {startLine:sheet.header.startLine,startColumn:sheet.header.startColumn} : null};
         } else if (owner) source={...source,elementId:owner};
-        const id=`rule:${hash({source,selector:rule.selectorList?.text || null,style,media:rule.media,supports:rule.supports,containerQueries:rule.containerQueries,layers:rule.layers,scopes:rule.scopes})}`;
+        const {styleSheetId:ignoredStyleSheetId,...normalizedStyle}=style;
+        const id=`rule:${hash({source,selector:rule.selectorList?.text || null,style:normalizedStyle,media:rule.media,supports:rule.supports,containerQueries:rule.containerQueries,layers:rule.layers,scopes:rule.scopes})}`;
         if(!rules.has(id) && rules.size>=maxRules){if(!state.missing.some(m=>m.reason==='matched-rule-budget'))state.missing.push({reason:'matched-rule-budget',limit:maxRules});return null;}
-        if (!rules.has(id)) rules.set(id,{id,selector:rule.selectorList?.text || null,source,declarations:style.cssProperties || [],protocol:rule});
+        if(!rules.has(id)) {
+          const declarations=style.cssProperties || [];
+          const variableNames=[...new Set(declarations.filter(p=>p.name?.startsWith('--')).map(p=>p.name))];
+          const references=new Map();
+          for(const property of declarations)for(const match of String(property.value ?? '').matchAll(/var\(\s*(--[\w-]+)/g))references.set(`${property.name}|${match[1]}`,{property:property.name,name:match[1]});
+          const {style:ignoredStyle,...protocol}=rule;
+          rules.set(id,{id,selector:rule.selectorList?.text || null,source,declarations,variableNames,variableReferences:[...references.values()],protocol,styleMetadata:{range:style.range || null,shorthandEntries:style.shorthandEntries || []}});
+        }
         return id;
       }
       async function normalizeMatches(matches,kind,owner) {
@@ -207,10 +223,16 @@ export async function createCssRuleCollector(page, { maxNodes = 1000, maxRules =
               if (matched.attributesStyle) entry.attributesRuleId=await normalizeRule({origin:'attributes',style:matched.attributesStyle},'attributes',node.elementId);
               for (const [ancestorLevel,inherited] of (matched.inherited || []).entries()) entry.inherited.push({ancestorLevel,matchedRules:await normalizeMatches(inherited.matchedCSSRules,'inherited'),inlineRuleId:inherited.inlineStyle ? await normalizeRule({origin:'inline',style:inherited.inlineStyle},'inherited',node.ancestorElementIds?.[ancestorLevel] || null):null});
               for (const pseudo of matched.pseudoElements || []) entry.pseudoElements.push({pseudoType:pseudo.pseudoType,pseudoIdentifier:pseudo.pseudoIdentifier || null,matchedRules:await normalizeMatches(pseudo.matches,'pseudo')});
-              const ruleIds=[...entry.matchedRules,...entry.inherited.flatMap(a=>a.matchedRules)].map(r=>r.ruleId);
-              if (entry.inlineRuleId) ruleIds.push(entry.inlineRuleId);
-              for (const ancestor of entry.inherited) if (ancestor.inlineRuleId) ruleIds.push(ancestor.inlineRuleId);
-              variables.push({stateId,elementId:node.elementId,computed:Object.fromEntries(Object.entries(entry.computedStyle).filter(([name])=>name.startsWith('--'))),declarations:ruleIds.flatMap(ruleId=>(rules.get(ruleId)?.declarations || []).filter(p=>p.name.startsWith('--')).map(p=>({ruleId,...p}))),references:ruleIds.flatMap(ruleId=>(rules.get(ruleId)?.declarations || []).flatMap(p=>[...p.value.matchAll(/var\(\s*(--[\w-]+)/g)].map(match=>({ruleId,property:p.name,name:match[1]}))))});
+              const ruleIds=new Set([...entry.matchedRules,...entry.inherited.flatMap(a=>a.matchedRules)].map(r=>r.ruleId));
+              if(entry.inlineRuleId)ruleIds.add(entry.inlineRuleId);
+              for(const ancestor of entry.inherited)if(ancestor.inlineRuleId)ruleIds.add(ancestor.inlineRuleId);
+              const values=Object.fromEntries(Object.entries(entry.computedStyle).filter(([name])=>name.startsWith('--')).sort(([a],[b])=>a.localeCompare(b)));
+              const resolvedSetId=`vars:${hash(values)}`;
+              if(!resolvedVariableSets.has(resolvedSetId))resolvedVariableSets.set(resolvedSetId,{id:resolvedSetId,values});
+              entry.computedStyle=Object.fromEntries(Object.entries(entry.computedStyle).filter(([name])=>!name.startsWith('--')));
+              entry.resolvedVariableSetId=resolvedSetId;
+              variableElements.push({stateId,elementId:node.elementId,frameIndex:index,scopeId:node.scopeId || null,resolvedSetId,
+                sourceRuleIds:[...ruleIds].filter(id=>{const rule=rules.get(id);return rule && (rule.variableNames.length || rule.variableReferences.length);})});
               return entry;
             } catch(error) {return {elementId:node.elementId,key:node.key,selector:node.selector,frameIndex:index,missing:String(error.message)};}
           }));
@@ -232,7 +254,7 @@ export async function createCssRuleCollector(page, { maxNodes = 1000, maxRules =
   }
   return {
     fingerprint,capture,
-    export:()=>({schemaVersion:1,stylesheets:[...sheets.values()],cssomSnapshots,rules:[...rules.values()],snapshots,variables,missing,budgets:{maxNodes,maxRules,maxSheetBytes}}),
+    export:()=>({schemaVersion:EVIDENCE_SCHEMA_VERSION,stylesheets:[...sheets.values()],cssomSnapshots,rules:[...rules.values()],snapshots,variables:{schemaVersion:EVIDENCE_SCHEMA_VERSION,resolvedSets:[...resolvedVariableSets.values()],elements:variableElements},missing,budgets:{maxNodes,maxRules,maxSheetBytes}}),
     dispose:async()=>{await Promise.all([...sessions.values()].map(s=>s.session.detach().catch(()=>{})));}
   };
 }

@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 2,
+  "baselineCommit": "78b0521",
+  "originalGrokArtifacts": {
+    "available": false,
+    "missing": [
+      "20-site matrix with exact URLs",
+      "original logs",
+      "defect list with evidence links",
+      "screenshots",
+      "runtime/browser versions and capture budgets"
+    ],
+    "searched": [
+      "workspace and repository files",
+      "GitHub PR #1 comments (none)",
+      "baseline commit workflow runs (none)",
+      "repository issues (none)"
+    ]
+  },
+  "repositoryMatrix": {
+    "path": "tests/site-matrix.json",
+    "sites": 8,
+    "isOriginal20SiteMatrix": false
+  },
+  "userReportedNotIndependentlyVerified": {
+    "S02": {
+      "variableDeclarations": 83878,
+      "uniqueRuleVariablePairs": 223,
+      "stylesheets": 306,
+      "missingHeaders": 303
+    },
+    "S04": {
+      "initialCaptureSeconds": 867
+    },
+    "cssCrashSites": [
+      "S01",
+      "S05",
+      "S06",
+      "S09",
+      "S11"
+    ]
+  },
+  "measurementScopes": {
+    "samples": 1,
+    "size": "Compact serialization of collector exports; excludes HTML, assets, file manifests and formatting differences. Not live-site output directory sizes.",
+    "memory": "Peak RSS of the Node collector and serialization process, sampled before metric analysis; excludes Chromium.",
+    "timing": "Collector plus serialization in a synthetic fixture. Single sample; no site performance conclusion."
+  },
+  "syntheticFixture": {
+    "kind": "synthetic-css-reproduction",
+    "fixture": {
+      "elements": 370,
+      "customProperties": 223,
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "maxCssNodes": 500
+    },
+    "node": "v24.19.0",
+    "browser": "156.0.8078.4",
+    "schemaVersion": 1,
+    "capturedNodes": 373,
+    "stylesheetRecords": 374,
+    "headerlessStylesheetRecords": 373,
+    "copiedVariableDeclarations": 166358,
+    "uniqueRuleVariablePairs": 223,
+    "resolvedSets": null,
+    "variableBytes": 24289426,
+    "totalCssBytes": 31990514,
+    "durationMs": 2731,
+    "nodePeakRssKiB": 408352,
+    "memoryScope": "Node collector process only; excludes Chromium"
+  }
+}
