@@ -43,3 +43,11 @@ output/
 原站与 Coding Agent 页面在相同视口和操作序列下比较。映射明确指定两边控件及必要的状态节点；允许容器、标签和 ID 不同。比较操作结果、必要属性/文本/表单、真实路由、边界坐标和样式。原 CSS 可直接保留或提供等效样式结果；未知或不可验证的规则来源单独报告。
 
 统计区分采集的 discovered / eligible / actionable / observed，以及独立前端验收的通过/失败/跳过。采集不表示交互已实现或已复刻。
+
+## CSS 采集通道
+
+`--max-css-nodes 1000` 控制每个状态、每个 frame 的 CDP 匹配节点预算。超限节点、不可访问 frame、样式表文本读取失败等均写入缺失记录。DOM 布局证据仍按 `--max-nodes` 预算采集。
+
+`css/stylesheets.json` 分别保存 CDP header / 文本版本、CSSOM 的 document / shadow 作用域与普通 / adopted 样式表顺序，以及 `css/original/` 中未经 URL 改写的网络响应。`assets/` 中的 CSS 仅为静态预览改写资源路径；原文件不会被覆盖。CSSOM 的规则树保留 import、条件和嵌套边界，源位置不可读时明确为 null。CDP 的规则顺序只表示协议提供的匹配顺序，不声称等于完整级联胜出顺序。
+
+每个状态的匹配记录包含稳定元素 ID、规则 ID、原始协议声明、继承、伪元素、计算样式及变量。未激活的 hover / focus / active 规则保留在样式表文本与 CSSOM 中；不会伪造“已经执行过”的状态。原生焦点轮廓不参与探索状态去重，完整计算样式仍作为 CSS 证据保存。

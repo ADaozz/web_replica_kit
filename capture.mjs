@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import { createCssRuleCollector } from './css-rule-capture.mjs';
+import { captureStructuredState } from './interaction-snapshot.mjs';
+import { discoverAllFrames } from './actionable-dom.mjs';
+import { semanticHash } from './state-diff.mjs';
 /**
  * 网页静态快照与设计结构采集工具。
  * 用法：node capture.mjs --url https://example.com --out output --width 1440
@@ -34,7 +38,7 @@ function parseArgs(argv) {
       }
     }
   }
-  const supported = new Set(['url','out','width','height','wait','max-nodes','headed','headless','manual','explore-interactions','allow-same-origin-navigation','explore-max-states','explore-max-depth','explore-max-actions','profile','ready-selector','ready-text','ready-timeout','executable']);
+  const supported = new Set(['url','out','width','height','wait','max-nodes','max-css-nodes','headed','headless','manual','explore-interactions','allow-same-origin-navigation','explore-max-states','explore-max-depth','explore-max-actions','profile','ready-selector','ready-text','ready-timeout','executable']);
   for (const key of Object.keys(args)) if (!supported.has(key)) throw new Error('Unknown option: --' + key);
   if (!args.url) {
     console.error('Usage: node capture.mjs --url https://example.com [--out site] [--width 1440] [--height 900] [--wait 1500] [--max-nodes 5000] [--headed] [--manual] [--explore-interactions] [--allow-same-origin-navigation] [--profile ./session] [--ready-selector SELECTOR] [--ready-text TEXT] [--executable /path/to/chromium]');
@@ -49,6 +53,7 @@ function parseArgs(argv) {
     height: clamp(args.height, 900, 320, 2160),
     wait: clamp(args.wait, 1500, 0, 30000),
     maxNodes: clamp(args['max-nodes'], 5000, 1, 20000),
+    maxCssNodes:clamp(args['max-css-nodes'],1000,1,20000),
     headed: !args.headless && Boolean(args.headed || args.manual || args['explore-interactions']),
     manual: Boolean(args.manual),
     exploreInteractions: Boolean(args['explore-interactions']),
@@ -513,6 +518,7 @@ async function main() {
   if (opts.executablePath) launchOptions.executablePath = opts.executablePath;
   let browser = null;
   let context = null;
+  let cssCollector = null;
   try {
     const contextOptions = {
       viewport: { width: opts.width, height: opts.height },
@@ -576,6 +582,7 @@ async function main() {
     await page.waitForTimeout(400);
     await waitForPending(pending);
     const iconInteractions = await page.evaluate(analyzeIconInteractions);
+    cssCollector=await createCssRuleCollector(page,{maxNodes:opts.maxCssNodes});
     let exploration = null;
     const baselineLayout = await inspectDOM(page, opts.maxNodes);
     const baselineOriginal = await page.content();
@@ -585,6 +592,7 @@ async function main() {
     if (opts.exploreInteractions) {
       try {
         exploration = await explorePage(page, {
+          cssCollector,
           allowSameOriginNavigation: opts.allowSameOriginNavigation,
           evidenceDir: opts.out,
           onState: async () => { observedInventories.push(await page.evaluate(discoverIcons,{limit:30000})); },
@@ -592,6 +600,13 @@ async function main() {
         });
         console.log(`Interaction evidence: ${exploration.coverage.discovered} controls discovered, ${exploration.coverage.observed} observed.`);
       } catch(error) {errors.push('Interaction collection failed: '+String(error.message));}
+    }
+    if (!exploration) {
+      const snapshot=await captureStructuredState(page,{limit:opts.maxNodes});
+      snapshot.cssFingerprint=await cssCollector.fingerprint(snapshot);
+      const evidence=await cssCollector.capture(snapshot,'state-000');
+      const controls=await discoverAllFrames(page,{allowSameOriginNavigation:opts.allowSameOriginNavigation,pageOrigin:page.url()});
+      exploration={states:[{id:'state-000',hash:semanticHash(snapshot),snapshot,evidence,depth:0,path:[]}],controls:controls.controls,transitions:[],failures:[],restorations:[],routes:[],overlayDiagnostics:[],coverage:{discovered:controls.controls.length,eligible:0,actionable:0,observed:0},truncated:false};
     }
     console.log('Checking required icon dependencies...');
     const inventory = await page.evaluate(discoverIcons, { limit: 30000 });
@@ -650,15 +665,24 @@ async function main() {
     const mappings = Object.fromEntries([...recorded.values()].flatMap(r =>
       [r.url, ...(r.aliases || [])].map(url => [url, r.localPath])));
 
+    // Keep the network response separately; preview URL rewriting must not erase source CSS.
+    const cssResourceFiles=[];
+    await fs.mkdir(path.join(opts.out,'css/original'),{recursive:true});
     // 按资源目录改写相对路径，使下载后的样式表可以在本地使用。
     for (const resource of recorded.values()) {
       if (!resource.localPath.endsWith('.css')) continue;
       const fullPath = path.join(opts.out, resource.localPath);
-      const raw = await fs.readFile(fullPath, 'utf8');
+      const originalBytes=await fs.readFile(fullPath);
+      const raw=originalBytes.toString('utf8');
+      const originalPath='css/original/'+path.basename(resource.localPath);
+      await fs.writeFile(path.join(opts.out,originalPath),originalBytes);
+      cssResourceFiles.push({url:resource.url,aliases:resource.aliases || [],originalPath,previewPath:resource.localPath,channel:'network-response',sha256:crypto.createHash('sha256').update(originalBytes).digest('hex')});
       await fs.writeFile(fullPath, rewriteCss(raw, resource.url, mappings, 'assets'));
 
     }
 
+    const cssEvidence=cssCollector.export();
+    for(const sheet of cssEvidence.stylesheets) sheet.resourceRef=cssResourceFiles.find(file=>file.url===sheet.header?.sourceURL || file.aliases.includes(sheet.header?.sourceURL))?.originalPath || null;
     const snapshot = {...settledSnapshot,html:rewriteSnapshotAssets(settledSnapshot.html,mappings,opts.url)};
     const assetDir = path.join(opts.out, 'assets');
     const spriteSources = [];
@@ -681,10 +705,14 @@ async function main() {
       writeJson('layout.json', { viewport: layout.viewport, pageSize: layout.pageSize,
         capped: layout.capped, nodes: layout.nodes }),
       writeJson('dom/tree.json', layout.tree),
+      writeJson('dom/elements.json',exploration.states[0].snapshot.nodes),
       writeJson('dom/components.json', layout.components),
       writeJson('dom/design-tokens.json', layout.tokens),
       writeJson('assets.json', [...recorded.values()]),
       writeJson('icons.json', iconReport),
+      writeJson('css/stylesheets.json',{schemaVersion:1,stylesheets:cssEvidence.stylesheets,resourceFiles:cssResourceFiles,cssomSnapshots:cssEvidence.cssomSnapshots,missing:cssEvidence.missing,budgets:cssEvidence.budgets}),
+      writeJson('css/matched-rules.json',{schemaVersion:1,rules:cssEvidence.rules,snapshots:cssEvidence.snapshots}),
+      writeJson('css/variables.json',{schemaVersion:1,elements:cssEvidence.variables}),
       writeJson('interactions/controls.json',exploration?.controls || []),
       writeJson('interactions/states.json',exploration?.states || []),
       writeJson('interactions/transitions.json',exploration?.transitions || []),
@@ -699,6 +727,7 @@ async function main() {
         missingIcons: iconReport.missing.length,
         purpose:'structure-style-behavior-evidence',
         preview:'static',
+        css:{stylesheets:cssEvidence.stylesheets.length,rules:cssEvidence.rules.length,missing:cssEvidence.missing},
         exploration: exploration ? {coverage:exploration.coverage,truncated:exploration.truncated,restoreFailed:exploration.restoreFailed,budgetUsage:exploration.budgetUsage} : null,
         readinessMode: opts.manual ? 'manual' :
           opts.readySelector ? 'selector' : opts.readyText ? 'text' : 'fixed-delay',
@@ -722,6 +751,7 @@ async function main() {
       process.exitCode = 2;
     }
   } finally {
+    if (cssCollector) await cssCollector.dispose();
     if (context) await context.close().catch(() => {});
     if (browser) await browser.close().catch(() => {});
   }

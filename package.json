@@ -11,7 +11,8 @@
     "test:interactions": "node --test tests/interactive-replica.e2e.mjs tests/overlay-interactions.e2e.mjs",
     "test:scroll": "node tests/snapshot-scroll.e2e.mjs",
     "test:sites": "node scripts/test-sites.mjs",
-    "audit": "node scripts/audit-snapshot.mjs"
+    "audit": "node scripts/audit-snapshot.mjs",
+    "test:css": "node --test tests/css-rule-capture.e2e.mjs"
   },
   "dependencies": {
     "playwright": "^1.55.0"

@@ -23,7 +23,7 @@ test('recursive source exploration preserves layout evidence and blocks writes',
     const states=[];
     const result=await explorePage(page,{budgets:{maxStates:24,maxDepth:2,maxActions:90},onState:state=>{states.push(state.id);return {collected:true};}});
     assert.deepEqual(writes,[]);
-    assert.ok(result.failures.some(f=>/network operation blocked/.test(f.reason)));
+    assert.ok(result.failures.some(f=>/network operation blocked/.test(f.reason)),JSON.stringify(result.failures));
     assert.ok(result.transitions.some(t=>t.control.selector==='#nested' && t.confidence==='observed'));
     assert.ok(result.transitions.some(t=>t.control.selector==='#dynamic' && t.confidence==='observed'));
     assert.ok(result.transitions.some(t=>t.effects.some(e=>e.type==='attribute' && e.name==='aria-selected')));

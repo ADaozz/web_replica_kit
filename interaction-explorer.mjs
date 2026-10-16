@@ -1,3 +1,4 @@
+import { createCssRuleCollector } from './css-rule-capture.mjs';
 import { protectExploration } from './exploration-safety.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -44,7 +45,7 @@ async function closeInPlace({ perform, capture, control, opened }) {
     if (!result?.ok || (result.writes || []).length) continue;
     const after = await capture();
     const diff = semanticDiff(opened, after);
-    if (diff.changed) return { action, diff, after };
+    if (semanticHash(opened)!==semanticHash(after)) return { action, diff, after };
   }
   return null;
 }
@@ -237,7 +238,12 @@ export async function explorePage(page, options = {}) {
   const initialUrl = page.url();
   const origin = new URL(initialUrl).origin;
   const pendingWrites = [], journal = [], diagnostics = [], restorations = [];
-  const capture = () => page.evaluate ? captureStructuredState(page) : Promise.resolve({ route: new URL(page.url()).pathname, nodes: [] });
+  const css = options.cssCollector || await createCssRuleCollector(page,options.cssBudgets);
+  const capture = async () => {
+    const snapshot = page.evaluate ? await captureStructuredState(page) : {route:new URL(page.url()).pathname,nodes:[]};
+    snapshot.cssFingerprint=await css.fingerprint(snapshot);
+    return snapshot;
+  };
   const discover = () => discoverAllFrames(page, { allowSameOriginNavigation, pageOrigin: page.url() });
   const safety = page.route ? await protectExploration(page,{origin}) : {blocked:[],dispose:async()=>{}};
   let evidenceIndex = 0;
@@ -258,8 +264,32 @@ export async function explorePage(page, options = {}) {
     const result = await runPlaywrightAction(page, control, action);
     await safety.checkBlockedSockets?.();
     pendingWrites.push(...safety.blocked);
+    safety.blocked.length=0;
     if (pendingWrites.length) return { ...result, actionable: Boolean(result.ok), ok: false, reason: 'network operation blocked before transmission', writes: pendingWrites.splice(0) };
     return result;
+  }
+  const contextOnly = (before,after) => semanticDiff(before,after).effects.every(e=>['computed-style','geometry','visibility','focus'].includes(e.type));
+  async function restoreContext(snapshot) {
+    if (!page.evaluate) return;
+    for (const meta of snapshot.frames || []) {
+      const frame=page.frames()[meta.index];
+      if (!frame || !meta.focus) continue;
+      await frame.evaluate(selector=>{
+        let root=document,el=null;
+        for(const part of selector.split('>>>').map(s=>s.trim())) {el=root?.querySelector(part);root=el?.shadowRoot;}
+        if (!el || el===document.body || el===document.documentElement) document.activeElement?.blur?.();
+        else if(document.activeElement!==el) el.focus?.({preventScroll:true});
+      },meta.focus);
+    }
+    const hovered=snapshot.nodes.filter(n=>!n.frameIndex && n.hovered && n.visible).at(-1);
+    if (hovered && !['html','body'].includes(hovered.tagName)) {
+      const locator=page.locator(hovered.selector.replaceAll('>>>',' '));
+      const box=await locator.boundingBox().catch(()=>null);
+      if (box && box.width>0 && box.height>0) await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
+    } else await page.mouse.move(0,0);
+    await stabilize(page);
+    await safety.checkBlockedSockets?.();
+    if(safety.blocked.length) throw new Error('network operation blocked during context restoration');
   }
   async function reverse(entry) {
     const current = await discover();
@@ -276,17 +306,18 @@ export async function explorePage(page, options = {}) {
     }
     if (entry.control.role === 'checkbox') candidates.push({ control, action: { kind: prior?.checked ? 'check':'uncheck' } });
     candidates.push({ control, action: { kind:'press',key:'Escape' } }, { control, action: { kind:'click' } });
-    const afterHash = semanticHash(entry.after);
+    const afterHash = semanticHash(await capture());
     for (const candidate of candidates) {
       const beforeInverse = await capture();
       if (candidate.navigationBack) { await page.goBack({ waitUntil:'domcontentloaded' }).catch(() => {}); await stabilize(page); }
       else if (candidate.leave) { await page.mouse.move(0,0); await stabilize(page); }
       else { const result = await execute(candidate.control, candidate.action).catch(() => ({ok:false})); if (!result.ok) continue; }
+      await restoreContext(entry.before);
       const snapshot = await capture();
       const success = semanticHash(snapshot) === semanticHash(entry.before);
       restorations.push({ control: publicControl(candidate.control || control), action: candidate.navigationBack ? {kind:'history-back'} : candidate.leave ? {kind:'leave'} : candidate.action, fromHash:semanticHash(beforeInverse),toHash:semanticHash(snapshot),success,effects:semanticDiff(beforeInverse,snapshot).effects });
       if (success) return;
-      if (semanticHash(snapshot) !== afterHash) throw new Error('restore failed: inverse reached an unknown state');
+      if (semanticHash(snapshot) !== afterHash && !contextOnly(beforeInverse,snapshot)) throw new Error('restore failed: inverse reached an unknown state');
     }
     throw new Error('restore failed: no observed inverse returns to prior state');
   }
@@ -317,11 +348,16 @@ export async function explorePage(page, options = {}) {
   }
   try {
     const result = await exploreInteractionGraph({
-      allowSameOriginNavigation, budgets: options.budgets || {}, discover, capture, perform, onState:options.onState,
+      allowSameOriginNavigation, budgets: options.budgets || {}, discover, capture, perform, onState:async state=>({...await options.onState?.(state),...await css.capture(state.snapshot,state.id)}),
       restore: async state => {
+        const beforeContext=await capture();
+        await restoreContext(state.snapshot);
+        const afterContext=await capture();
+        if(semanticHash(afterContext)!==state.hash && !contextOnly(beforeContext,afterContext)) throw new Error('context restoration reached an unknown DOM state');
         if (semanticHash(await capture()) === state.hash) {await restoreScroll(state.snapshot);return;}
         while (journal.length) {
           await reverse(journal[journal.length-1]); journal.pop();
+          await restoreContext(state.snapshot);
           if (semanticHash(await capture()) === state.hash) {await restoreScroll(state.snapshot);return;}
         }
         for (const step of state.path || []) {
@@ -331,6 +367,7 @@ export async function explorePage(page, options = {}) {
           const result = await perform(control,step.action,false);
           if (!result.ok) throw new Error(result.reason || 'restore action failed');
         }
+        await restoreContext(state.snapshot);
         if (semanticHash(await capture()) !== state.hash) throw new Error('restore failed: target state mismatch');
         await restoreScroll(state.snapshot);
       },
@@ -343,6 +380,6 @@ export async function explorePage(page, options = {}) {
     }
     result.coverage=summarizeCoverage({controls:result.controls,checks:result.checks,transitions:result.transitions});
     result.budgetUsage.restorationActions=restorations.length;
-    return { ...result, restorations, overlayDiagnostics: diagnostics };
-  } finally { await safety.dispose(); }
+    return { ...result, css:css.export(), restorations, overlayDiagnostics: diagnostics };
+  } finally { await safety.dispose(); if(!options.cssCollector)await css.dispose(); }
 }
