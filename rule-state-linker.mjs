@@ -13,6 +13,7 @@ export function linkRuleStates({states=[],transitions=[],observations=[],css={}}
   const relations=transitions.map((transition,index)=>{
     const before=transition.beforeObservationId ? observed.get(transition.beforeObservationId) : byState.get(transition.from),after=transition.afterObservationId ? observed.get(transition.afterObservationId) : byState.get(transition.to);
     const base={transitionId:transition.id || `transition-${String(index).padStart(4,'0')}`,from:transition.from,to:transition.to,beforeObservationId:transition.beforeObservationId || null,afterObservationId:transition.afterObservationId || null,action:transition.action,controlId:transition.control.id};
+    if(transition.evidenceMissing?.length)return {...base,status:'unresolved',reason:transition.evidenceMissing.join('; '),effects:transition.effects,targets:[]};
     if (!before || !after) return {...base,status:'unresolved',reason:'state absent or state budget exhausted',targets:[]};
     const a=before.snapshot,b=after.snapshot;
     const triggers=a.nodes.filter(n=>n.selector===transition.control.selector && (n.frameIndex || 0)===(transition.control.frameIndex || 0));
@@ -34,7 +35,7 @@ export function linkRuleStates({states=[],transitions=[],observations=[],css={}}
       const prior=left?.elements.find(e=>e.elementId===old?.elementId),next=right?.elements.find(e=>e.elementId===pair.after?.elementId);
       const beforeIds=matchedIds(prior),afterIds=matchedIds(next);
       const removed=beforeIds.filter(id=>!afterIds.includes(id)),added=afterIds.filter(id=>!beforeIds.includes(id));
-      const stateChanges=effects.filter(e=>['attribute','property','aria','value','text','visibility','insert','remove','move','children'].includes(e.type));
+      const stateChanges=effects.filter(e=>['attribute','property','aria','value','text','content','visibility','insert','remove','move','children'].includes(e.type));
       const sameTrigger=trigger && (node.elementId===trigger.elementId || old?.elementId===trigger.elementId);
       const declaration=declared.find(d=>d.target && [node.elementId,old?.elementId].includes(d.target.elementId));
       // Exact attribute selectors on this node are evidence of a selector dependency.

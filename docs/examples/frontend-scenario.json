@@ -1,0 +1,35 @@
+{
+  "viewport": {"width": 1440, "height": 900},
+  "tolerance": 8,
+  "steps": [
+    {
+      "id": "open-models",
+      "controlId": "models-menu",
+      "source": {"selector": "#models-trigger"},
+      "target": {"selector": "#model-picker"},
+      "action": {"kind": "click"},
+      "assertions": [
+        {
+          "source": {"selector": "#models-trigger"},
+          "target": {"selector": "#model-picker"},
+          "attributes": ["aria-expanded"]
+        },
+        {
+          "source": {"selector": "#models-menu"},
+          "target": {"selector": ".model-options"},
+          "attributes": ["data-state"],
+          "visible": true,
+          "bbox": true,
+          "styles": ["display", "position", "background-color", "font-family"],
+          "cssRules": [
+            {
+              "sourceSelector": "#models-menu[data-state=\"open\"]",
+              "targetSelector": ".model-options[data-state=\"open\"]",
+              "properties": ["display"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

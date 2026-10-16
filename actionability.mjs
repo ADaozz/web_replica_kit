@@ -1,5 +1,3 @@
-import { discoverAllFrames } from './actionable-dom.mjs';
-
 export async function resolveLocator(scope, control) {
   const strategies = control.locatorStrategies || [];
   let ambiguous = false;
@@ -29,10 +27,15 @@ export async function resolveLocator(scope, control) {
 
 export function frameFor(page, control) {
   const frames = page.frames();
+  if(Number.isInteger(control.frameIndex)) {
+    const frame=frames[control.frameIndex];
+    if(frame && (!control.frameUrl || frame.url()===control.frameUrl || control.frameIndex===0))return frame;
+    return null;
+  }
   if (control.frameUrl) {
-    const match = frames.find(frame => frame.url() === control.frameUrl);
-    if (match) return match;
-    if (control.framePath?.length) return null;
+    const matches=frames.filter(frame=>frame.url()===control.frameUrl);
+    if(matches.length===1)return matches[0];
+    if(matches.length>1 || control.framePath?.length)return null;
   }
   return page.mainFrame?.() || page;
 }
@@ -111,8 +114,4 @@ export async function runPlaywrightAction(page, control, action) {
   else return { ok: false, reason: 'unsupported-action' };
   await stabilize(page);
   return { ok: true, strategy: resolved.strategy, trial: { scrollBefore: before, scrollAfter: afterTrial } };
-}
-
-export async function discoverActionableInventory(page, options = {}) {
-  return discoverAllFrames(page, options);
 }

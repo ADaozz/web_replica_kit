@@ -121,9 +121,9 @@ try {
         let missing = 0;
         let changed = 0;
         const differences = [];
-        for (const node of nodes.filter(node => node.visible && node.rect.width > 0 && node.rect.height > 0)) {
+        for (const node of nodes.filter(node => !node.frameIndex && node.visible && node.rect.width > 0 && node.rect.height > 0)) {
           let el;
-          try { el = document.querySelector(node.selector); } catch { continue; }
+          try {let scope=document;for(const part of node.selector.split('>>>').map(s=>s.trim())){el=scope?.querySelector(part);scope=el?.shadowRoot;}} catch { missing++;continue; }
           checked++;
           if (!el) { missing++; continue; }
           const rect = el.getBoundingClientRect();

@@ -55,3 +55,13 @@ test('disabled, obscured, and ambiguous targets are not actionable', async () =>
   assert.equal(resolved.reason, 'locatorAmbiguous');
   assert.equal((await verifyActionability(pageWith(ambiguous), control)).actionable, false);
 });
+
+test('explicit frame index disambiguates frames with identical URLs',async()=>{
+  const counts=[0,0],url=()=> 'http://fixture.test/shared';
+  const frames=counts.map((_n,index)=>({url,locator:()=>({count:async()=>1,click:async options=>{if(!options?.trial)counts[index]++;}})}));
+  const page={frames:()=>frames,mainFrame:()=>frames[0]};
+  const result=await runPlaywrightAction(page,{selector:'#toggle',selectorStable:true,frameIndex:1,frameUrl:url()}, {kind:'click'});
+  assert.equal(result.ok,true);assert.deepEqual(counts,[0,1]);
+  const ambiguous=await runPlaywrightAction(page,{selector:'#toggle',selectorStable:true,frameUrl:url()},{kind:'click'});
+  assert.equal(ambiguous.ok,false);assert.deepEqual(counts,[0,1]);
+});

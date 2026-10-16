@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareInteractionSnapshots, semanticDiff } from '../state-diff.mjs';
+import { semanticDiff } from '../state-diff.mjs';
 import { classifyNavigation, routeKey } from '../route-capture.mjs';
-import { verifyInteractionReport } from '../scripts/verify-interactions.mjs';
+import { compareMappedFacts } from '../scripts/verify-interactions.mjs';
 
 test('semantic diff keeps visibility, aria, and route changes while ignoring noise and scroll', () => {
   const before = {
@@ -27,8 +27,8 @@ test('semantic diff keeps visibility, aria, and route changes while ignoring noi
   assert.ok(diff.effects.some(effect => effect.type === 'aria' && effect.name === 'aria-expanded' && effect.to === 'true'));
   assert.equal(diff.effects.some(effect => effect.key === 'clock'), false);
   assert.deepEqual(diff.ignored, ['uniform-scroll']);
-  assert.equal(compareInteractionSnapshots(before, after).verified, false);
-  assert.equal(compareInteractionSnapshots(after, after).verified, true);
+  assert.equal(!semanticDiff(before,after,{strictGeometry:true}).changed, false);
+  assert.equal(!semanticDiff(after,after,{strictGeometry:true}).changed, true);
 });
 
 test('route policy blocks other origins unless same-origin exploration is permitted', () => {
@@ -38,15 +38,11 @@ test('route policy blocks other origins unless same-origin exploration is permit
   assert.equal(classifyNavigation('http://fixture.test/app', 'http://fixture.test/settings', { allowSameOriginNavigation: true }).classification, 'allowed-safe');
 });
 
-test('verification report keeps a denominator and fails closed on mismatch', () => {
-  const report = verifyInteractionReport({
-    steps: [{ snapshot: { route: '/app', nodes: [{ key: 'panel', visible: true }] }, action: { kind: 'click' } }]
-  }, {
-    steps: [{ snapshot: { route: '/app', nodes: [{ key: 'panel', visible: false }] }, action: { kind: 'click' } }]
-  });
-  assert.equal(report.replicaVerified, false);
-  assert.equal(report.denominator, 1);
-  assert.equal(report.verified, 0);
+test('mapped verification compares required facts and actual popup edges',()=>{
+  const a={attributes:{'aria-expanded':'true'},bbox:{x:100,y:20,width:120,height:50}};
+  assert.equal(compareMappedFacts(a,a,{bbox:true}).passed,true);
+  assert.equal(compareMappedFacts(a,{...a,bbox:{...a.bbox,x:109}},{bbox:true}).passed,false);
+  assert.equal(compareMappedFacts(a,{...a,attributes:{'aria-expanded':'false'}},{bbox:true}).passed,false);
 });
 
 test('structural snapshots retain positional selectors, shadow selectors, text and classes',async()=>{
@@ -59,7 +55,7 @@ test('structural snapshots retain positional selectors, shadow selectors, text a
   assert.ok(diff.effects.some(e=>e.type==='text'));
   assert.ok(diff.effects.some(e=>e.type==='geometry'));
   assert.notEqual(semanticHash(before),semanticHash(after));
-  assert.equal(compareInteractionSnapshots(before,after).verified,false);
+  assert.equal(!semanticDiff(before,after,{strictGeometry:true}).changed,false);
 });
 
 test('verification rejects uniform position errors and hashes ignore compensated scroll',async()=>{
@@ -67,7 +63,7 @@ test('verification rejects uniform position errors and hashes ignore compensated
   const a={route:'/lab',nodes:[{key:'a',visible:true,bbox:{x:100,y:100,width:50,height:20},documentBox:{x:100,y:100,width:50,height:20}}]};
   const scrolled={...a,nodes:[{...a.nodes[0],bbox:{x:100,y:50,width:50,height:20}}]};
   assert.equal(semanticHash(a),semanticHash(scrolled));
-  assert.equal(compareInteractionSnapshots(a,scrolled).verified,false);
+  assert.equal(!semanticDiff(a,scrolled,{strictGeometry:true}).changed,false);
 });
 
 test('attribute removal and reinsertion order does not create a false state or restore failure',async()=>{
@@ -75,4 +71,13 @@ test('attribute removal and reinsertion order does not create a false state or r
   const a={route:'/lab',nodes:[{key:'popup',visible:false,attributes:{hidden:'',style:'position:absolute'}}]};
   const b={route:'/lab',nodes:[{key:'popup',visible:false,attributes:{style:'position:absolute',hidden:''}}]};
   assert.equal(semanticHash(a),semanticHash(b));assert.equal(semanticDiff(a,b).changed,false);
+});
+
+test('running animation appearance and transform do not create new semantic states',async()=>{
+  const {semanticHash}=await import('../state-diff.mjs');
+  const a={route:'/lab',nodes:[{key:'spinner',animating:true,visible:true,appearance:{display:'block',visibility:'visible',opacity:'0.3',transform:'rotate(10deg)'},layout:{position:'relative',transform:'rotate(10deg)'}}]};
+  const b={...a,nodes:[{...a.nodes[0],appearance:{...a.nodes[0].appearance,opacity:'0.7',transform:'rotate(80deg)'},layout:{position:'relative',transform:'rotate(80deg)'}}]};
+  assert.equal(semanticHash(a),semanticHash(b));assert.equal(semanticDiff(a,b).changed,false);
+  const hidden={...b,nodes:[{...b.nodes[0],visible:false,appearance:{...b.nodes[0].appearance,display:'none'}}]};
+  assert.notEqual(semanticHash(a),semanticHash(hidden));
 });

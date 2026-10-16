@@ -16,4 +16,4 @@ Web Replica Kit 是网页结构、原始样式规则、资源和交互行为的�
 11. 不提交 cookies、认证头、私人 profile 或实际采集内容。未知行为、资源缺失和能力边界必须可追踪。
 
 ## 回归
-每个架构阶段提交对应测试。最终运行 `npm test`、`npm run test:e2e`、`npm run test:scroll` 和 `npm run test:interactions`。原有字体、图片、SVG、CSS mask、Shadow DOM 和滚动预览不得回退。
+每个架构阶段提交对应测试。最终运行 `npm test`、`npm run test:e2e`、`npm run test:scroll`、`npm run test:interactions` 和 `npm run test:css`。原有字体、图片、SVG、CSS mask、Shadow DOM 和滚动预览不得回退。

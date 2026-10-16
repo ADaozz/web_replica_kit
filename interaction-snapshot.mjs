@@ -1,5 +1,18 @@
 // Structured evidence for controls AND changed content, including open shadow roots.
-export function readDocumentState({ limit = 8000 } = {}) {
+export function readDocumentState({ limit = 8000, includeLayoutStyles = false } = {}) {
+  const layoutProperties = [
+      'display', 'position', 'box-sizing', 'width', 'height', 'min-width',
+      'max-width', 'min-height', 'max-height', 'top', 'left', 'right', 'bottom',
+      'margin', 'padding', 'gap', 'row-gap', 'column-gap', 'flex', 'flex-direction',
+      'flex-wrap', 'justify-content', 'align-items', 'align-self',
+      'grid-template-columns', 'grid-template-rows', 'grid-area',
+      'background', 'background-color', 'background-image', 'color',
+      'font-family', 'font-size', 'font-weight', 'font-style', 'line-height',
+      'letter-spacing', 'text-align', 'text-decoration', 'text-transform',
+      'border', 'border-radius', 'box-shadow', 'opacity', 'overflow',
+      'overflow-x', 'overflow-y', 'z-index', 'transform', 'object-fit',
+      'aspect-ratio', 'visibility'
+    ];
   const nodes = [];
   const skip = new Set(['script','noscript','template']);
   const identityKey=Symbol.for('web-replica-kit.identities');
@@ -29,6 +42,7 @@ export function readDocumentState({ limit = 8000 } = {}) {
         attributes: Object.fromEntries([...el.attributes].filter(a => !(['style','class'].includes(a.name) && !a.value.trim())).filter(a=> !/^on|nonce|token|secret|password/i.test(a.name) && a.name!=='value').map(a => [a.name,a.value])),
         modal: el.localName === 'dialog' ? el.matches(':modal') : null,
         text: sensitive ? null : [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(''),
+        content:[...el.childNodes].map(child=>child.nodeType===1?{type:'element',elementId:elementId(child),selector:selector(child)}:child.nodeType===3?{type:'text',text:sensitive?null:child.textContent}:child.nodeType===8?{type:'comment',text:child.textContent}:null).filter(Boolean),
         leaf: el.children.length === 0, hovered:el.matches(':hover'), focused:el.matches(':focus'), popover,
         value: !sensitive && 'value' in el ? String(el.value) : null,
         checked: 'checked' in el ? el.checked : null, selected: 'selected' in el ? el.selected : null,
@@ -36,8 +50,9 @@ export function readDocumentState({ limit = 8000 } = {}) {
         animating,
         documentBox: { x: b.x + scrollX + internalX, y: b.y + scrollY + internalY, width: b.width, height: b.height },
         appearance:Object.fromEntries(['color','background-color','opacity','font-family','font-size','font-weight','line-height','border-top-color','border-top-width','box-shadow','display','visibility','transform'].map(name=>[name,s.getPropertyValue(name)])),
+        ...(includeLayoutStyles ? {layoutStyles:Object.fromEntries(layoutProperties.map(name=>[name,s.getPropertyValue(name)]))}:{}),
         layout: { position: s.position, transform: s.transform, display: s.display, visibility: s.visibility, offsetParent: el.offsetParent ? selector(el.offsetParent) : null },
-        scroll: { x: el.scrollLeft, y: el.scrollTop }, noise: /timestamp|clock|nonce|uuid/i.test(`${el.id} ${el.className}`) });
+        scroll: { x: el.scrollLeft, y: el.scrollTop }, contentOmitted:sensitive?'sensitive form data':null });
       if (el.shadowRoot) walk(el.shadowRoot);
     }
   }
@@ -46,18 +61,18 @@ export function readDocumentState({ limit = 8000 } = {}) {
   try { historyState = JSON.parse(JSON.stringify(history.state)); } catch {}
   let active=document.activeElement;
   while (active?.shadowRoot?.activeElement) active=active.shadowRoot.activeElement;
-  return { documentId:ids.documentId, focus:active ? selector(active):null, nodes, viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, historyState, truncated: nodes.length >= limit };
+  return { documentId:ids.documentId, focus:active ? selector(active):null, nodes, viewport: { width: innerWidth, height: innerHeight }, pageSize:{width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight}, scroll: { x: scrollX, y: scrollY }, historyState, omittedTags:[...skip],truncated: nodes.length >= limit };
 }
 
-export async function captureStructuredState(page, {limit=8000} = {}) {
+export async function captureStructuredState(page, {limit=8000,includeLayoutStyles=false} = {}) {
   const url = new URL(page.url());
   const nodes = [], frames = [];
   for (const [index, frame] of page.frames().entries()) {
     try {
-      const snapshot = await frame.evaluate(readDocumentState, {limit});
-      frames.push({ index, documentId:snapshot.documentId, viewport: snapshot.viewport, scroll: snapshot.scroll, historyState: snapshot.historyState, focus:snapshot.focus, truncated: snapshot.truncated });
+      const snapshot = await frame.evaluate(readDocumentState, {limit,includeLayoutStyles});
+      frames.push({ index,url:frame.url(), documentId:snapshot.documentId, viewport: snapshot.viewport, pageSize:snapshot.pageSize, scroll: snapshot.scroll, historyState: snapshot.historyState, focus:snapshot.focus, omittedTags:snapshot.omittedTags,truncated: snapshot.truncated });
       nodes.push(...snapshot.nodes.map(node => ({ ...node, key: `${index}:${node.key}`, frameIndex: index })));
-    } catch (error) { frames.push({ index, unsupported: String(error.message || error) }); }
+    } catch (error) { frames.push({ index,url:frame.url(), unsupported: String(error.message || error) }); }
   }
   return { origin: url.origin, route: url.pathname + url.search + url.hash, historyState: frames[0]?.historyState ?? null, focus:frames[0]?.focus ?? null, nodes, frames };
 }

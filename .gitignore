@@ -8,7 +8,6 @@ __pycache__/
 output/
 *-output/
 test-results/
-interaction-states/
 
 # 隔离浏览器会话及本地配置
 private-session/

@@ -69,16 +69,17 @@ test('CDP captures source boundaries, matched rules, CSSOM changes, conditions, 
     assert.deepEqual(cssom.scopes[0].styleSheets.slice(0,2),cssom.sheets.filter(s=>s.href).slice(0,2).map(s=>s.id));
     await page.evaluate(()=>document.getElementById('dynamic-style').sheet.insertRule('#menu {word-spacing:2px}',2));
     const changed=await captureStructuredState(page);changed.cssFingerprint=await collector.fingerprint(changed);assert.notEqual(changed.cssFingerprint,after.cssFingerprint);
+    await page.goto(source.url);const reloaded=await captureStructuredState(page);reloaded.cssFingerprint=await collector.fingerprint(reloaded);assert.equal(reloaded.cssFingerprint,before.cssFingerprint,'new browser instance IDs must not prevent semantic restoration');
   } finally {await collector?.dispose();await browser.close();source.instance.close();foreign.instance.close();}
 });
 
 test('CSS budgets and absent CDP sessions produce explicit missing evidence',async()=>{
   const browser=await chromium.launch();
   try {
-    const page=await browser.newPage();await page.setContent('<style>button{color:red}button:hover{color:blue}</style><button id="a">A</button><button id="b">B</button>');
+    const page=await browser.newPage();await page.setContent('<style>html{color:red}html{font-weight:bold}button{color:red}button:hover{color:blue}</style><button id="a">A</button><button id="b">B</button>');
     const collector=await createCssRuleCollector(page,{maxNodes:1,maxRules:1});
     const snapshot=await captureStructuredState(page);await collector.fingerprint(snapshot);await collector.capture(snapshot,'limited');
-    const result=collector.export();assert.ok(result.snapshots[0].missing.some(m=>m.reason==='matched-node-budget'));assert.ok(result.missing.some(m=>m.kind==='cssom-rule-budget'));await collector.dispose();
+    const result=collector.export();assert.ok(result.snapshots[0].missing.some(m=>m.reason==='matched-node-budget'));assert.ok(result.missing.some(m=>m.kind==='cssom-rule-budget'));assert.ok(result.snapshots[0].missing.some(m=>m.reason==='matched-rule-budget'));await collector.dispose();
     const unavailable=await createCssRuleCollector({context(){throw new Error('CDP not available');},frames:()=>[]});
     assert.ok(unavailable.export().missing.some(m=>m.kind==='cdp-unavailable'));await unavailable.dispose();
   }finally {await browser.close();}

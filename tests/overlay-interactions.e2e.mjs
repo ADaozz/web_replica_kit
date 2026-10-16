@@ -11,7 +11,7 @@ import {makeSnapshotHtml} from '../capture.mjs';
 
 const fixture=await fs.readFile(new URL('./fixtures/interaction-lab.html',import.meta.url),'utf8');
 async function serve(body,writes=[]) {
-  const server=http.createServer((req,res)=>{if(req.method==='POST'){writes.push(req.url);res.writeHead(204);res.end();return;}res.setHeader('Content-Type','text/html; charset=utf-8');res.end(body());});
+  const server=http.createServer((req,res)=>{if(req.method==='POST'){writes.push(req.url);res.writeHead(204);res.end();return;}res.setHeader('Content-Type',req.url.endsWith('.css')?'text/css':'text/html; charset=utf-8');res.end(body(req,res));});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   return {server,url:`http://127.0.0.1:${server.address().port}/lab`};
 }
@@ -21,7 +21,7 @@ test('recursive source exploration preserves layout evidence and blocks writes',
   try {
     const page=await browser.newPage({viewport:{width:1440,height:900}});await page.goto(server.url);
     const states=[];
-    const result=await explorePage(page,{budgets:{maxStates:24,maxDepth:2,maxActions:90},onState:state=>{states.push(state.id);return {collected:true};}});
+    const result=await explorePage(page,{maxObservations:512,budgets:{maxStates:24,maxDepth:2,maxActions:90},onState:state=>{states.push(state.id);return {collected:true};}});
     assert.deepEqual(writes,[]);
     assert.ok(result.failures.some(f=>/network operation blocked/.test(f.reason)),JSON.stringify(result.failures));
     assert.ok(result.transitions.some(t=>t.control.selector==='#nested' && t.confidence==='observed'));
@@ -50,13 +50,27 @@ test('recursive source exploration preserves layout evidence and blocks writes',
 test('capture exports static evidence without replay products',async()=>{
   const {execFile}=await import('node:child_process');const {promisify}=await import('node:util');
   const output=await fs.mkdtemp(path.join(os.tmpdir(),'replica-evidence-'));
-  const html='<button id="toggle" aria-expanded="false" aria-controls="panel">More</button><div id="panel" hidden>Menu</div><script>toggle.onclick=()=>{const open=toggle.getAttribute("aria-expanded")!=="true";toggle.setAttribute("aria-expanded",String(open));panel.hidden=!open;}</script>';
-  const server=await serve(()=>html);
+  const css='#panel[data-state="closed"]{display:none}\n#panel[data-state="open"]{display:block;color:rgb(1,2,3)}';
+  const html='<link rel="stylesheet" href="/rules.css"><link rel="stylesheet" href="/missing.css"><button id="toggle" aria-expanded="false" aria-controls="panel">More</button><div id="panel" data-state="closed">Menu</div><script>toggle.onclick=()=>{const open=toggle.getAttribute("aria-expanded")!=="true";toggle.setAttribute("aria-expanded",String(open));panel.dataset.state=open?"open":"closed";}</script>';
+  const server=await serve((req,res)=>{if(req.url==='/missing.css'){res.statusCode=404;return '';}return req.url==='/rules.css'?css:html;});
   try {
     await promisify(execFile)(process.execPath,['capture.mjs','--url',server.url,'--out',output,'--headless','--explore-interactions','--explore-max-actions','4','--explore-max-depth','1','--wait','0'],{cwd:path.resolve('.'),timeout:60000});
     const preview=await fs.readFile(path.join(output,'index.html'),'utf8');
     assert.equal(preview.includes('wrk-offline-interactions'),false);assert.equal(preview.includes('replaceChildren'),false);
     for(const file of ['dom/tree.json','interactions/controls.json','interactions/states.json','interactions/transitions.json'])assert.ok((await fs.stat(path.join(output,file))).size>0);
+    const read=async file=>JSON.parse(await fs.readFile(path.join(output,file),'utf8'));
+    const states=await read('interactions/states.json'),matched=await read('css/matched-rules.json'),sheets=await read('css/stylesheets.json');
+    assert.ok(states.length>1);assert.ok(states.every(state=>!('snapshot' in state) && state.domRef && state.cssRef));
+    for(const state of states){assert.ok((await read(state.domRef)).nodes.length);assert.ok(matched.snapshots.some(s=>s.id===state.cssRef.snapshotId));}
+    const elements=await read('dom/elements.json'),tree=await read('dom/tree.json');
+    assert.ok(tree.nodes.every(node=>elements.some(e=>e.elementId===node.elementId)));
+    assert.ok((await read('interactions/controls.json')).every(c=>c.elementRefs.length>0));
+    assert.ok((await read('report.json')).missingResources.some(item=>item.url.endsWith('/missing.css') && item.reason));
+    const raw=sheets.resourceFiles.find(file=>file.url.endsWith('/rules.css'));
+    assert.equal(await fs.readFile(path.join(output,raw.originalPath),'utf8'),css);
+    const relations=await read('relations/state-style.json');
+    assert.ok(relations.relations.some(r=>r.targets.some(t=>t.status==='observed' && t.selectorDependencies.some(d=>d.attribute==='data-state'))));
+    assert.ok(matched.rules.some(r=>r.selector==='#panel[data-state="open"]' && r.source.range));
     for(const file of ['interactions.js','state-000.html','interaction-states','styles.css'])await assert.rejects(fs.stat(path.join(output,file)),{code:'ENOENT'});
   } finally {server.server.close();await fs.rm(output,{recursive:true,force:true});}
 });

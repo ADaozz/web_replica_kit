@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
-// Keep independently injected offline runtimes authorized without enabling arbitrary scripts.
-export function allowInlineScript(html, script) {
+// Authorize the static scroll/defined initialization by its exact content hash.
+function allowInlineScript(html, script) {
   const hash = `'sha256-${crypto.createHash('sha256').update(script).digest('base64')}'`;
   return html.replace(/script-src\s+([^;"<>]+)/i, (_match, sources) => {
     const tokens = sources.trim().split(/\s+/).filter(value => value !== "'none'");
@@ -9,7 +9,7 @@ export function allowInlineScript(html, script) {
   });
 }
 
-export function restoreSnapshotScroll(root = document) {
+function restoreSnapshotScroll(root = document) {
   const saved = [];
   const pending = restoreSnapshotScroll.pending ||= new WeakMap();
   const elements = [];
@@ -77,7 +77,7 @@ function initializeSnapshotScroll(restore) {
   else window.addEventListener('load', ready, { once: true });
 }
 
-export const snapshotScrollScript = `(${initializeSnapshotScroll.toString()})(${restoreSnapshotScroll.toString()});`;
+const snapshotScrollScript = `(${initializeSnapshotScroll.toString()})(${restoreSnapshotScroll.toString()});`;
 
 export function injectSnapshotScrollRuntime(html) {
   if ((!html.includes('data-wrk-scroll-left=') && !html.includes('data-wrk-defined')) || html.includes('id="wrk-snapshot-scroll"')) return html;

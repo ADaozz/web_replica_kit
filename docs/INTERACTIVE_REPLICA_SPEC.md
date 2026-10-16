@@ -12,11 +12,13 @@ output/
   assets.json
   dom/tree.json
   dom/elements.json
+  dom/states/observation-*.json
   css/stylesheets.json
   css/matched-rules.json
   css/variables.json
   interactions/controls.json
   interactions/states.json
+  interactions/observations.json
   interactions/transitions.json
   interactions/failures.json
   interactions/restorations.json
@@ -59,3 +61,5 @@ output/
 图节点按语义状态去重。每次实际观测另有 observation ID，记录当时的元素实例、焦点、悬停与 CSS 匹配；转换通过 `beforeObservationId` / `afterObservationId` 引用它们。这样重建菜单产生的新节点不会错误引用早先同义状态中的旧实例。观测证据预算默认 256，超限保留转换和缺失原因。
 
 `relations/state-style.json` 按转换记录 trigger、显式 ARIA / popover 目标、属性和结构差异、前后真实匹配规则、增删规则及来源。简单选择器中直接依赖变化属性的部分可标记为 `selector-dependency-observed`；这不证明应用处理器的源码或其他视觉变化的因果。无显式目标关系、缺失匹配 CSS、未知节点对应等均保留 `unresolved`。CSSOM 补充规则也有 ID，但不会猜测它与某个 CDP 规则的对应。
+
+字段约定、读取路径及外部前端验收示例见 [Coding Agent 指南](CODING_AGENT_GUIDE.md)。所有输出统一使用 report.schemaVersion = 1；状态保存引用，不嵌入整页 HTML。

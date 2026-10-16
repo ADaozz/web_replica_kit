@@ -5,10 +5,12 @@ function canonical(value) {
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])]));
   return value;
 }
+const appearance=node=>node.animating ? {display:node.appearance?.display,visibility:node.appearance?.visibility}:node.appearance;
+const content=node=>(node.content || []).map(({elementId,...part})=>part);
 const equal = (a, b) => JSON.stringify(canonical(a ?? null)) === JSON.stringify(canonical(b ?? null));
 function semanticNode(node, anchor) {
   const b = node.documentBox || node.bbox || {};
-  return { key: node.key, visible: Boolean(node.visible), expanded: node.expanded ?? null, pressed: node.pressed ?? null, checked: node.checked ?? null, selected: node.selected ?? null, value: node.value ?? null, attributes: node.attributes, text: node.text, popover: node.popover, modal: node.modal, appearance: node.appearance, layout: node.animating ? {...node.layout,transform:undefined} : node.layout,
+  return { key: node.key, parent:node.parent,content:content(node),visible: Boolean(node.visible), expanded: node.expanded ?? null, pressed: node.pressed ?? null, checked: node.checked ?? null, selected: node.selected ?? null, value: node.value ?? null, attributes: node.attributes, text: node.text, popover: node.popover, modal: node.modal, appearance: appearance(node), layout: node.animating ? {...node.layout,transform:undefined} : node.layout,
     box: !node.visible || node.animating ? null : [Math.round((b.x || 0) - anchor.x), Math.round((b.y || 0) - anchor.y), Math.round(b.width || 0), Math.round(b.height || 0)] };
 }
 export function semanticHash(snapshot) {
@@ -65,12 +67,13 @@ export function semanticDiff(before, after, { strictGeometry = false, strictFocu
     for (const name of new Set([...Object.keys(a.attributes || {}),...Object.keys(b.attributes || {})])) {
       if (!equal(a.attributes?.[name],b.attributes?.[name])) push('attribute',a.attributes?.[name] ?? null,b.attributes?.[name] ?? null,{ name });
     }
-    if (!equal(a.appearance,b.appearance)) push('computed-style',a.appearance,b.appearance);
+    if (!equal(appearance(a),appearance(b))) push('computed-style',a.appearance,b.appearance);
+    if (!equal(content(a),content(b))) push('content',a.content,b.content);
     if (!equal(a.text,b.text)) push('text',a.text,b.text);
     if (!equal(a.value,b.value)) push('value',a.value ?? null,b.value ?? null);
     if (!equal(a.modal,b.modal)) push('dialog',a.modal,b.modal);
     if (!equal(a.popover,b.popover)) push('popover',a.popover,b.popover);
-    if (a.bbox && b.bbox && (a.visible || b.visible)) {
+    if (a.bbox && b.bbox && !a.animating && !b.animating && (a.visible || b.visible)) {
       const width = Math.abs(b.bbox.width-a.bbox.width), height = Math.abs(b.bbox.height-a.bbox.height);
       const fromBox = strictGeometry ? a.bbox : (a.documentBox || a.bbox);
       const toBox = strictGeometry ? b.bbox : (b.documentBox || b.bbox);
@@ -83,9 +86,4 @@ export function semanticDiff(before, after, { strictGeometry = false, strictFocu
   if (!strictGeometry && movements.length === positioned && movements.length && movements.every(n => Math.abs(n.dx-movements[0].dx)<=1 && Math.abs(n.dy-movements[0].dy)<=1) && !before?.frames) ignored.push('uniform-scroll');
   else effects.push(...movements.map(({dx,dy,...effect})=>effect));
   return { effects, changed: effects.length > 0, ignored };
-}
-
-export function compareInteractionSnapshots(source, replica, options = {}) {
-  const diff = semanticDiff(source, replica, { strictGeometry: true, strictFocus:true, tolerance: 8, ...options });
-  return { verified: diff.effects.length === 0, replicaVerified: diff.effects.length === 0, effects: diff.effects, ignored: diff.ignored };
 }

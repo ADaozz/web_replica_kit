@@ -139,7 +139,19 @@ export async function createCssRuleCollector(page, { maxNodes = 1000, maxRules =
     for (const info of sessions.values()) for (const [id,header] of info.headers) if (header.active) versions.push(await sheetVersion(info,id));
     revision={frames,versions};
     // Ignore computed @media activity here: appearance/layout captures the actual state.
-    return hash(frames.map(f=>({documentId:f.documentId,scopes:f.scopes,sheets:f.sheets})));
+    return hash(frames.map(frame=>{
+      const byId=new Map(frame.sheets.map(sheet=>[sheet.id,sheet]));
+      function semanticSheet(id,seen=new Set()) {
+        if(seen.has(id))return {cycle:true};
+        const sheet=byId.get(id);if(!sheet)return {missing:true};
+        const next=new Set([...seen,id]);
+        const content=items=>items.map(item=>({cssText:item.cssText,imported:item.importedSheetId?semanticSheet(item.importedSheetId,next):null,children:item.children?content(item.children):null}));
+        return {href:sheet.href,disabled:sheet.disabled,media:sheet.media,rules:content(sheet.rules)};
+      }
+      return {frameIndex:frame.frameIndex,scopes:frame.scopes.map((scope,index)=>({kind:scope.kind,
+        host:snapshot?.nodes?.find(n=>n.elementId===scope.hostElementId)?.selector || (scope.kind==='document'?'document':`shadow-${index}`),
+        styleSheets:scope.styleSheets.map(id=>semanticSheet(id)),adoptedStyleSheets:scope.adoptedStyleSheets.map(id=>semanticSheet(id))}))};
+    }));
   }
   async function capture(snapshot,stateId) {
     if (!revision) await fingerprint(snapshot);
@@ -167,6 +179,7 @@ export async function createCssRuleCollector(page, { maxNodes = 1000, maxRules =
           source={...source,stylesheetId:version.id,versionId:version.versionId,url:sheet?.header?.sourceURL || null,headerRange:sheet?.header ? {startLine:sheet.header.startLine,startColumn:sheet.header.startColumn} : null};
         } else if (owner) source={...source,elementId:owner};
         const id=`rule:${hash({source,selector:rule.selectorList?.text || null,style,media:rule.media,supports:rule.supports,containerQueries:rule.containerQueries,layers:rule.layers,scopes:rule.scopes})}`;
+        if(!rules.has(id) && rules.size>=maxRules){if(!state.missing.some(m=>m.reason==='matched-rule-budget'))state.missing.push({reason:'matched-rule-budget',limit:maxRules});return null;}
         if (!rules.has(id)) rules.set(id,{id,selector:rule.selectorList?.text || null,source,declarations:style.cssProperties || [],protocol:rule});
         return id;
       }

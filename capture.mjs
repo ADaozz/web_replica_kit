@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { buildEvidenceManifest } from './evidence-output.mjs';
 import { linkRuleStates } from './rule-state-linker.mjs';
 import { createCssRuleCollector } from './css-rule-capture.mjs';
 import { captureStructuredState } from './interaction-snapshot.mjs';
@@ -17,7 +18,7 @@ import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
 import { discoverIcons, completeIcons, inlineSpriteSymbols } from './icon-capture.mjs';
 import { analyzeIconInteractions } from './icon-interactions.mjs';
-import { explorePage } from './interaction-explorer.mjs';
+import { explorePage, summarizeCoverage } from './interaction-explorer.mjs';
 import { injectSnapshotScrollRuntime } from './snapshot-scroll.mjs';
 import { finalizeSnapshotResources, rewriteSnapshotAssets } from './snapshot-resources.mjs';
 
@@ -157,124 +158,10 @@ export async function scrollToLoadLazyAssets(page) {
 }
 
 async function inspectDOM(page, maxNodes) {
-  return page.evaluate((limit) => {
-    const properties = [
-      'display', 'position', 'box-sizing', 'width', 'height', 'min-width',
-      'max-width', 'min-height', 'max-height', 'top', 'left', 'right', 'bottom',
-      'margin', 'padding', 'gap', 'row-gap', 'column-gap', 'flex', 'flex-direction',
-      'flex-wrap', 'justify-content', 'align-items', 'align-self',
-      'grid-template-columns', 'grid-template-rows', 'grid-area',
-      'background', 'background-color', 'background-image', 'color',
-      'font-family', 'font-size', 'font-weight', 'font-style', 'line-height',
-      'letter-spacing', 'text-align', 'text-decoration', 'text-transform',
-      'border', 'border-radius', 'box-shadow', 'opacity', 'overflow',
-      'overflow-x', 'overflow-y', 'z-index', 'transform', 'object-fit',
-      'aspect-ratio', 'visibility'
-    ];
-    const nodes = [];
-    const idOf = new Map();
-    const tokens = { colors: {}, fonts: {}, fontSizes: {}, radii: {}, gaps: {} };
-    const countToken = (group, value) => {
-      if (!value || value === 'normal' || value === 'none' ||
-          value === 'transparent' || value === 'rgba(0, 0, 0, 0)') return;
-      group[value] = (group[value] || 0) + 1;
-    };
-    function selector(el) {
-      const parts = [];
-      let cur = el;
-      for (let depth = 0; cur && depth < 8 && cur.nodeType === 1; depth++) {
-        const tag = cur.tagName.toLowerCase();
-        if (cur.id) {
-          parts.unshift(`#${CSS.escape(cur.id)}`);
-          break;
-        }
-        const parent = cur.parentElement;
-        let nth = 1;
-        if (parent) {
-          let sibling = cur.previousElementSibling;
-          while (sibling) {
-            if (sibling.tagName === cur.tagName) nth++;
-            sibling = sibling.previousElementSibling;
-          }
-        }
-        parts.unshift(`${tag}:nth-of-type(${nth})`);
-        cur = parent;
-      }
-      return parts.join(' > ');
-    }
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-    let el = document.body;
-    while (el && nodes.length < limit) {
-      const style = window.getComputedStyle(el);
-      const rect = el.getBoundingClientRect();
-      const styles = {};
-      for (const prop of properties) styles[prop] = style.getPropertyValue(prop).trim();
-      const visible = rect.width > 0 && rect.height > 0 &&
-        style.display !== 'none' && style.visibility !== 'hidden';
-      const id = nodes.length + 1;
-      const childrenText = [...el.childNodes]
-        .filter(node => node.nodeType === Node.TEXT_NODE)
-        .map(node => node.textContent.trim())
-        .filter(Boolean).join(' ').slice(0, 160);
-      nodes.push({
-        id,
-        parentId: idOf.get(el.parentElement) ?? null,
-        tag: el.tagName.toLowerCase(),
-        selector: selector(el),
-        className: el.getAttribute('class') || '',
-        role: el.getAttribute('role') || null,
-        ariaLabel: el.getAttribute('aria-label') || null,
-        text: childrenText,
-        visible,
-        rect: {
-          x: Math.round((rect.x + scrollX) * 100) / 100,
-          y: Math.round((rect.y + scrollY) * 100) / 100,
-          width: Math.round(rect.width * 100) / 100,
-          height: Math.round(rect.height * 100) / 100
-        },
-        styles
-      });
-      idOf.set(el, id);
-      if (visible) {
-        countToken(tokens.colors, styles['background-color']);
-        countToken(tokens.colors, styles.color);
-        countToken(tokens.fonts, styles['font-family']);
-        countToken(tokens.fontSizes, styles['font-size']);
-        countToken(tokens.radii, styles['border-radius']);
-        countToken(tokens.gaps, styles.gap);
-      }
-      el = walker.nextNode();
-    }
-    function top(group) {
-      return Object.entries(group).sort((a,b) => b[1]-a[1]).slice(0, 30)
-        .map(([value, count]) => ({ value, count }));
-    }
-    const semanticTags = new Set(['header', 'nav', 'main', 'footer', 'article',
-      'section', 'aside', 'form', 'dialog', 'button', 'table']);
-    const components = nodes.filter(n => n.visible && n.rect.width >= 24 &&
-      n.rect.height >= 15 && (semanticTags.has(n.tag) ||
-      /(?:header|footer|nav|sidebar|card|modal|hero|menu|toolbar|tabs|dialog|button|widget)/i
-        .test(n.className))).slice(0, 300)
-      .map(({ id, parentId, tag, selector, className, rect }) =>
-        ({ id, parentId, tag, selector, className, rect }));
-    const lookup = new Map(nodes.map(n => [n.id, { id: n.id, tag: n.tag,
-      className: n.className, text: n.text, children: [] }]));
-    const roots = [];
-    for (const n of nodes) {
-      const node = lookup.get(n.id);
-      if (n.parentId && lookup.has(n.parentId)) lookup.get(n.parentId).children.push(node);
-      else roots.push(node);
-    }
-    return {
-      viewport: { width: innerWidth, height: innerHeight },
-      pageSize: { width: document.documentElement.scrollWidth,
-        height: document.documentElement.scrollHeight },
-      capturedNodes: nodes.length,
-      capped: Boolean(el),
-      nodes, components, tree: roots,
-      tokens: Object.fromEntries(Object.entries(tokens).map(([k,v]) => [k,top(v)]))
-    };
-  }, maxNodes);
+  const snapshot=await captureStructuredState(page,{limit:maxNodes,includeLayoutStyles:true});
+  return {viewport:snapshot.frames[0]?.viewport,pageSize:snapshot.frames[0]?.pageSize,
+    capturedNodes:snapshot.nodes.length,capped:snapshot.frames.some(f=>f.truncated),frames:snapshot.frames,
+    nodes:snapshot.nodes.map(n=>({elementId:n.elementId,parentElementId:n.parentElementId,frameIndex:n.frameIndex,selector:n.selector,tag:n.tagName,visible:n.visible,rect:{...n.bbox,x:n.bbox.x+(snapshot.frames[n.frameIndex]?.scroll?.x || 0),y:n.bbox.y+(snapshot.frames[n.frameIndex]?.scroll?.y || 0)},styles:n.layoutStyles}))};
 }
 
 export async function makeSnapshotHtml(page, assetMap) {
@@ -320,6 +207,12 @@ export async function makeSnapshotHtml(page, assetMap) {
     function cloneRendered(source) {
       const target = source.cloneNode(false);
       if (source.nodeType !== Node.ELEMENT_NODE) return target;
+      if(source.localName==='input') {
+        const sensitive=source.matches('input[type=password],input[type=file],input[type=hidden]') || /token|secret|password/i.test(`${source.id} ${source.name}`);
+        if(sensitive)target.removeAttribute('value');else target.setAttribute('value',source.value);
+        target.toggleAttribute('checked',source.checked);
+      }
+      if(source.localName==='option')target.toggleAttribute('selected',source.selected);
       if (source.localName.includes('-') && source.matches(':defined')) definedElements.push(target);
       // Scroll offsets are live DOM properties, absent from cloneNode/outerHTML.
       // Zero matters too: CSS scroll snapping may otherwise select a different state.
@@ -327,6 +220,7 @@ export async function makeSnapshotHtml(page, assetMap) {
           source.scrollWidth > source.clientWidth || source.scrollHeight > source.clientHeight) {
         scrollStates.push({ target, left: source.scrollLeft, top: source.scrollTop });
       }
+      if(source.localName==='textarea'){target.textContent=/token|secret|password/i.test(`${source.id} ${source.name}`)?'':source.value;return target;}
       // 动态 insertRule() 添加的规则不在文本内容中，需要读取样式表。
       if (source.localName === 'style' && source.sheet) {
         try { target.textContent = [...source.sheet.cssRules].map(r => r.cssText).join('\n'); return target; } catch {}
@@ -364,12 +258,6 @@ export async function makeSnapshotHtml(page, assetMap) {
       el.removeAttribute('srcdoc');
       el.setAttribute('src', 'about:blank');
     });
-    all.filter(el => el.localName === 'input').forEach(el => {
-      el.removeAttribute('value');
-      el.removeAttribute('checked');
-    });
-    all.filter(el => el.localName === 'textarea').forEach(el => el.textContent = '');
-    all.filter(el => el.localName === 'option').forEach(el => el.removeAttribute('selected'));
     all.forEach(el => {
       for (const attribute of [...el.attributes]) {
         const name = attribute.name.toLowerCase();
@@ -481,11 +369,15 @@ async function getCaptureDiagnostics(page) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  const existing=await fs.readdir(opts.out).catch(error=>{if(error.code==='ENOENT')return [];throw error;});
+  if(existing.length)throw new Error('Output directory must be empty; choose a fresh --out directory to avoid mixing evidence from different captures.');
   await fs.mkdir(path.join(opts.out, 'assets'), { recursive: true });
   const recorded = new Map();
   const redirectAliases = new Map();
   const pending = new Set();
   const errors = [];
+  const resourceFailures=new Map();
+  const missingResource=(url,type,reason,details={})=>resourceFailures.set(JSON.stringify([url,type,reason]),{url,type,reason,...details});
   const saving = new Map();
   let totalBytes = 0;
   const currentMappings = () => {
@@ -536,12 +428,19 @@ async function main() {
       context = await browser.newContext(contextOptions);
     }
     const page = context.pages()[0] || await context.newPage();
+    page.on('requestfailed',request=>{
+      const type=request.resourceType();
+      if(request.method()!=='GET' || !isHttpUrl(request.url()) || !shouldStore(type,''))return;
+      const job=(async()=>{const response=await request.response().catch(()=>null);missingResource(request.url(),type,request.failure()?.errorText || 'request failed',{status:response?.status() || null});})();
+      pending.add(job);void job.finally(()=>pending.delete(job));
+    });
     page.on('requestfinished', request => {
       const type = request.resourceType();
       if (request.method() !== 'GET' || !isHttpUrl(request.url())) return;
       const job = (async () => {
         const response = await request.response();
-        if (!response || response.status() < 200 || response.status() >= 300) return;
+        if(!response){if(shouldStore(type,''))missingResource(request.url(),type,'response unavailable');return;}
+        if(response.status()<200 || response.status()>=300){if(!request.redirectedTo() && shouldStore(type,response.headers()['content-type'] || ''))missingResource(request.url(),type,'unsuccessful HTTP response',{status:response.status()});return;}
         const contentType = response.headers()['content-type'] || '';
         if (!shouldStore(type, contentType)) return;
         for (let previous = request.redirectedFrom(); previous; previous = previous.redirectedFrom()) {
@@ -549,10 +448,10 @@ async function main() {
         }
         if (recorded.has(response.url())) return;
         const contentLength = Number(response.headers()['content-length']);
-        if (Number.isFinite(contentLength) && contentLength > MAX_PER_FILE) return;
+        if(Number.isFinite(contentLength) && contentLength>MAX_PER_FILE){missingResource(response.url(),type,'resource-byte-budget',{bytes:contentLength,limit:MAX_PER_FILE});return;}
         const body = await response.body();
         await storeResource(response.url(), body, contentType, type);
-      })().catch(e => errors.push(`${type}: ${String(e.message || e)}`));
+      })().catch(e=>{const reason=String(e.message || e);errors.push(`${type}: ${reason}`);missingResource(request.url(),type,reason);});
       pending.add(job);
       void job.finally(() => pending.delete(job));
     });
@@ -584,30 +483,27 @@ async function main() {
     await waitForPending(pending);
     const iconInteractions = await page.evaluate(analyzeIconInteractions);
     cssCollector=await createCssRuleCollector(page,{maxNodes:opts.maxCssNodes});
-    let exploration = null;
     const baselineLayout = await inspectDOM(page, opts.maxNodes);
     const baselineOriginal = await page.content();
     const settledSnapshot = await makeSnapshotHtml(page, currentMappings());
     const observedInventories = [await page.evaluate(discoverIcons, {limit:30000})];
     await page.screenshot({path:path.join(opts.out,'screenshot.png'),fullPage:true,animations:'disabled'}).catch(error=>errors.push(String(error.message)));
+    const baselineSnapshot=await captureStructuredState(page,{limit:opts.maxNodes});
+    baselineSnapshot.cssFingerprint=await cssCollector.fingerprint(baselineSnapshot);
+    const initialEvidence=await cssCollector.capture(baselineSnapshot,'initial');
+    const initialControls=await discoverAllFrames(page,{allowSameOriginNavigation:opts.allowSameOriginNavigation,pageOrigin:page.url()});
+    let exploration={states:[{id:'state-000',hash:semanticHash(baselineSnapshot),snapshot:baselineSnapshot,evidence:initialEvidence,depth:0,path:[]}],controls:initialControls.controls,transitions:[],failures:[],restorations:[],routes:[],overlayDiagnostics:[],coverage:summarizeCoverage({controls:initialControls.controls}),truncated:false,limitations:initialControls.limitations};
     if (opts.exploreInteractions) {
       try {
         exploration = await explorePage(page, {
-          cssCollector,
+          cssCollector,snapshotLimit:opts.maxNodes,
           allowSameOriginNavigation: opts.allowSameOriginNavigation,
           evidenceDir: opts.out,
           onState: async () => { observedInventories.push(await page.evaluate(discoverIcons,{limit:30000})); },
           budgets: {maxStates:opts.exploreMaxStates,maxDepth:opts.exploreMaxDepth,maxActions:opts.exploreMaxActions}
         });
         console.log(`Interaction evidence: ${exploration.coverage.discovered} controls discovered, ${exploration.coverage.observed} observed.`);
-      } catch(error) {errors.push('Interaction collection failed: '+String(error.message));}
-    }
-    if (!exploration) {
-      const snapshot=await captureStructuredState(page,{limit:opts.maxNodes});
-      snapshot.cssFingerprint=await cssCollector.fingerprint(snapshot);
-      const evidence=await cssCollector.capture(snapshot,'state-000');
-      const controls=await discoverAllFrames(page,{allowSameOriginNavigation:opts.allowSameOriginNavigation,pageOrigin:page.url()});
-      exploration={states:[{id:'state-000',hash:semanticHash(snapshot),snapshot,evidence,depth:0,path:[]}],controls:controls.controls,transitions:[],failures:[],restorations:[],routes:[],overlayDiagnostics:[],coverage:{discovered:controls.controls.length,eligible:0,actionable:0,observed:0},truncated:false};
+      } catch(error) {const reason='Interaction collection failed: '+String(error.message);errors.push(reason);exploration.failures.push({stage:'exploration',reason});exploration.restoreFailed=true;}
     }
     console.log('Checking required icon dependencies...');
     const inventory = await page.evaluate(discoverIcons, { limit: 30000 });
@@ -698,50 +594,52 @@ async function main() {
       await fs.mkdir(path.dirname(full), { recursive: true });
       await fs.writeFile(full, JSON.stringify(data, null, 2));
     };
+    const resourceFailureEvidence=[...resourceFailures.values()].map(item=>({...item,resolved:Boolean(recorded.has(item.url) || recorded.has(redirectAliases.get(item.url)))}));
+    const manifest=buildEvidenceManifest(exploration);
+    await Promise.all(manifest.documents.map(item=>writeJson(item.file,item.snapshot)));
     await fs.mkdir(path.join(opts.out,'dom'),{recursive:true});
     await Promise.all([
       fs.writeFile(path.join(opts.out, 'index.html'), snapshot.html),
       writeJson('dom/icon-hosts.json',iconInteractions),
       fs.writeFile(path.join(opts.out,'dom/original.html'),originalHtml),
-      writeJson('layout.json', { viewport: layout.viewport, pageSize: layout.pageSize,
+      writeJson('layout.json', { schemaVersion:1,viewport: layout.viewport, pageSize: layout.pageSize,frames:layout.frames,
         capped: layout.capped, nodes: layout.nodes }),
-      writeJson('dom/tree.json', layout.tree),
+      writeJson('dom/tree.json', manifest.tree),
       writeJson('dom/elements.json',exploration.states[0].snapshot.nodes),
-      writeJson('dom/components.json', layout.components),
-      writeJson('dom/design-tokens.json', layout.tokens),
       writeJson('assets.json', [...recorded.values()]),
       writeJson('icons.json', iconReport),
       writeJson('css/stylesheets.json',{schemaVersion:1,stylesheets:cssEvidence.stylesheets,resourceFiles:cssResourceFiles,cssomSnapshots:cssEvidence.cssomSnapshots,missing:cssEvidence.missing,budgets:cssEvidence.budgets}),
       writeJson('css/matched-rules.json',{schemaVersion:1,rules:cssEvidence.rules,snapshots:cssEvidence.snapshots}),
       writeJson('css/variables.json',{schemaVersion:1,elements:cssEvidence.variables}),
       writeJson('relations/state-style.json',exploration.relations || linkRuleStates({...exploration,css:cssEvidence})),
-      writeJson('interactions/controls.json',exploration?.controls || []),
-      writeJson('interactions/states.json',exploration?.states || []),
+      writeJson('interactions/controls.json',manifest.controls),
+      writeJson('interactions/states.json',manifest.states),
+      writeJson('interactions/observations.json',manifest.observations),
       writeJson('interactions/transitions.json',exploration?.transitions || []),
       writeJson('interactions/failures.json',exploration?.failures || []),
       writeJson('interactions/restorations.json',exploration?.restorations || []),
       writeJson('interactions/overlay-diagnostics.json',exploration?.overlayDiagnostics || []),
-      writeJson('routes.json',{initialRoute:new URL(opts.url).pathname,routes:exploration?.routes || []}),
+      writeJson('routes.json',{initialRoute:baselineSnapshot.route,routes:exploration?.routes || []}),
       writeJson('report.json', {
-        capturedAt: new Date().toISOString(), sourceUrl: opts.url,
-        finalUrl: page.url(), captureDiagnostics,
+        schemaVersion:1,capturedAt: new Date().toISOString(), sourceUrl: opts.url,
+        finalUrl: page.url(),settledRoute:baselineSnapshot.route, captureDiagnostics,
         iconPolicy: iconReport.policy, iconsComplete: iconReport.complete,
-        missingIcons: iconReport.missing.length,
+        missingIcons: iconReport.missing.length,resourceFailures:resourceFailureEvidence,missingResources:resourceFailureEvidence.filter(item=>!item.resolved),
         purpose:'structure-style-behavior-evidence',
         preview:'static',
-        css:{stylesheets:cssEvidence.stylesheets.length,rules:cssEvidence.rules.length,missing:cssEvidence.missing},
-        exploration: exploration ? {coverage:exploration.coverage,truncated:exploration.truncated,restoreFailed:exploration.restoreFailed,budgetUsage:exploration.budgetUsage} : null,
+        css:{stylesheets:cssEvidence.stylesheets.length,rules:cssEvidence.rules.length,missing:cssEvidence.missing,snapshots:cssEvidence.snapshots.map(s=>({id:s.id,capturedNodes:s.elements.length,missing:s.missing,nodeFailures:s.elements.filter(e=>e.missing).map(e=>({elementId:e.elementId,reason:e.missing}))}))},
+        exploration: exploration ? {coverage:exploration.coverage,truncated:exploration.truncated,restoreFailed:exploration.restoreFailed,budgetUsage:exploration.budgetUsage,observationBudget:exploration.observationBudget,limitations:exploration.limitations} : null,
         readinessMode: opts.manual ? 'manual' :
           opts.readySelector ? 'selector' : opts.readyText ? 'text' : 'fixed-delay',
         viewport: layout.viewport, pageSize: layout.pageSize,
         capturedNodes: layout.capturedNodes, capped: layout.capped,
-        componentCandidates: layout.components.length, assetCount: recorded.size,
+        assetCount: recorded.size,
         assetBytes: totalBytes, errors: errors.slice(0, 100),
         limitations: [
           'index.html is a static structure/style preview. Collected actions do not generate component behavior.',
           'Missing resources may still load from their original URLs.',
           'Cross-origin iframe contents, closed shadow roots, canvas pixels and application state are not fully exported.',
-          'Only the captured viewport and rendered state are represented.',
+          'Only visited states and CSS within the recorded budgets are represented; resources in unvisited states or inactive conditions may remain unresolved.',
           'Do not publish captured files unless you have the required rights.'
         ]
       })

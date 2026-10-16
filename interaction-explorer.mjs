@@ -8,7 +8,7 @@ import { collectOverlayDiagnostics } from './overlay-diagnostics.mjs';
 import { classifyActionSafety, discoverAllFrames } from './actionable-dom.mjs';
 import { runPlaywrightAction, stabilize } from './actionability.mjs';
 import { semanticDiff, semanticHash } from './state-diff.mjs';
-import { routeKey, routesFromTransitions } from './route-capture.mjs';
+import { routesFromTransitions } from './route-capture.mjs';
 
 const DEFAULT_BUDGETS = { maxStates: 24, maxDepth: 4, maxActions: 40 };
 
@@ -169,6 +169,7 @@ export async function exploreInteractionGraph({
           from: state.id,
           to: next.state?.id || null,
           beforeObservationId:before.observationId || null,afterObservationId:after.observationId || null,
+          evidenceMissing:[before.missingCssReason,after.missingCssReason].filter(Boolean),
           control: publicControl(control),
           action,
           effects: diff.effects,
@@ -183,6 +184,7 @@ export async function exploreInteractionGraph({
               from: next.state?.id || state.id,
               to: state.id,
               beforeObservationId:after.observationId || null,afterObservationId:closed.after.observationId || null,
+              evidenceMissing:[after.missingCssReason,closed.after.missingCssReason].filter(Boolean),
               control: publicControl(control),
               action: closed.action,
               effects: closed.diff.effects,
@@ -245,9 +247,9 @@ export async function explorePage(page, options = {}) {
   const observations=[],observedSnapshots=new Map();
   const maxObservations=options.maxObservations ?? 256;
   const capture = async () => {
-    const snapshot = page.evaluate ? await captureStructuredState(page) : {route:new URL(page.url()).pathname,nodes:[]};
+    const snapshot = page.evaluate ? await captureStructuredState(page,{limit:options.snapshotLimit || 8000}) : {route:new URL(page.url()).pathname,nodes:[]};
     snapshot.cssFingerprint=await css.fingerprint(snapshot);
-    const signature=JSON.stringify([semanticHash(snapshot),snapshot.focus,snapshot.nodes.map(n=>[n.elementId,n.selector,n.hovered,n.focused])]);
+    const signature=JSON.stringify([semanticHash(snapshot),snapshot.frames?.map(f=>({scroll:f.scroll,focus:f.focus,viewport:f.viewport})),snapshot.nodes.map(n=>[n.elementId,n.selector,n.hovered,n.focused,n.bbox,n.scroll])]);
     let observed=observedSnapshots.get(signature);
     if(!observed && observations.length<maxObservations) {
       const id=`observation-${String(observations.length).padStart(4,'0')}`;
@@ -330,7 +332,7 @@ export async function explorePage(page, options = {}) {
       await restoreContext(entry.before);
       const snapshot = await capture();
       const success = semanticHash(snapshot) === semanticHash(entry.before);
-      restorations.push({ control: publicControl(candidate.control || control), action: candidate.navigationBack ? {kind:'history-back'} : candidate.leave ? {kind:'leave'} : candidate.action, fromHash:semanticHash(beforeInverse),toHash:semanticHash(snapshot),beforeObservationId:beforeInverse.observationId || null,afterObservationId:snapshot.observationId || null,success,effects:semanticDiff(beforeInverse,snapshot).effects });
+      restorations.push({ control: publicControl(candidate.control || control), action: candidate.navigationBack ? {kind:'history-back'} : candidate.leave ? {kind:'leave'} : candidate.action, fromHash:semanticHash(beforeInverse),toHash:semanticHash(snapshot),beforeObservationId:beforeInverse.observationId || null,afterObservationId:snapshot.observationId || null,evidenceMissing:[beforeInverse.missingCssReason,snapshot.missingCssReason].filter(Boolean),success,effects:semanticDiff(beforeInverse,snapshot).effects });
       if (success) return;
       if (semanticHash(snapshot) !== afterHash && !contextOnly(beforeInverse,snapshot)) throw new Error('restore failed: inverse reached an unknown state');
     }
@@ -391,7 +393,7 @@ export async function explorePage(page, options = {}) {
     for (const inverse of restorations.filter(r=>r.success && !['history-back','leave'].includes(r.action.kind))) {
       const from=result.states.find(s=>s.hash===inverse.fromHash),to=result.states.find(s=>s.hash===inverse.toHash);
       if (!from || !to || !inverse.effects.length) continue;
-      result.transitions.push({from:from.id,to:to.id,control:inverse.control,action:inverse.action,effects:inverse.effects,confidence:'observed',classification:'allowed-safe',basis:'observed-restoration',beforeObservationId:inverse.beforeObservationId,afterObservationId:inverse.afterObservationId});
+      result.transitions.push({from:from.id,to:to.id,control:inverse.control,action:inverse.action,effects:inverse.effects,confidence:'observed',classification:'allowed-safe',basis:'observed-restoration',beforeObservationId:inverse.beforeObservationId,afterObservationId:inverse.afterObservationId,evidenceMissing:inverse.evidenceMissing});
     }
     result.coverage=summarizeCoverage({controls:result.controls,checks:result.checks,transitions:result.transitions});
     result.budgetUsage.restorationActions=restorations.length;

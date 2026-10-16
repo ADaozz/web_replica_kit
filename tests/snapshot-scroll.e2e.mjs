@@ -108,3 +108,15 @@ test('snapshot restores zero/nonzero scroll, nested and shadow offsets under CSP
     await fs.rm(directory,{recursive:true,force:true});
   }
 });
+
+test('static preview preserves observed non-sensitive form state and native CSS selectors',async()=>{
+  const browser=await chromium.launch();
+  try {
+    const source=await browser.newPage();await source.setContent('<style>input:checked+label{color:rgb(3,4,5)}</style><input id="check" type="checkbox"><label for="check">On</label><input id="text" value="initial"><input id="password" type="password" value="private"><textarea id="area">initial</textarea><select><option>A</option><option>B</option></select>');
+    await source.evaluate(()=>{document.querySelector('#check').checked=true;document.querySelector('#text').value='current';document.querySelector('#area').value='updated';document.querySelector('select').selectedIndex=1;});
+    const snapshot=await makeSnapshotHtml(source,{}),preview=await browser.newPage();await preview.setContent(snapshot.html);
+    assert.equal(await preview.locator('#check').isChecked(),true);assert.equal(await preview.locator('#text').inputValue(),'current');
+    assert.equal(await preview.locator('#area').inputValue(),'updated');assert.equal(await preview.locator('select').inputValue(),'B');assert.equal(await preview.locator('#password').inputValue(),'');
+    assert.equal(await preview.locator('label').evaluate(el=>getComputedStyle(el).color),'rgb(3, 4, 5)');
+  } finally {await browser.close();}
+});
