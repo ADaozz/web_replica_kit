@@ -18,28 +18,46 @@ export function semanticHash(snapshot) {
   return crypto.createHash('sha256').update(JSON.stringify(canonical(body))).digest('hex').slice(0, 16);
 }
 
+// DOM instance continuity is proved by the browser WeakMap ID. An author ID only
+// proves a logical counterpart within one unchanged document/shadow scope.
+export function correspondElements(before,after) {
+  const left=(before?.nodes || []).filter(n=>!n.noise),right=(after?.nodes || []).filter(n=>!n.noise);
+  const used=new Set(),pairs=[];
+  const identity=n=>n.scopeId && n.attributes?.id ? `${n.scopeId}|${n.attributes.id}`:null;
+  for(const a of left) {
+    let b=a.elementId ? right.find(n=>n.elementId===a.elementId):right.find(n=>!n.elementId && n.key===a.key);
+    let basis=a.elementId?'same-browser-node':'semantic-key-without-instance-proof';
+    if(!b && identity(a) && left.filter(n=>identity(n)===identity(a)).length===1) {
+      const candidates=right.filter(n=>identity(n)===identity(a));
+      if(candidates.length===1) {b=candidates[0];basis='unique-author-id-in-same-root';}
+    }
+    if(b && used.has(b))b=null;
+    if(b)used.add(b);
+    pairs.push({before:a,after:b || null,basis:b?basis:'removed-node',physicalIdentity:Boolean(b && a.elementId && a.elementId===b.elementId)});
+  }
+  for(const b of right)if(!used.has(b))pairs.push({before:null,after:b,basis:'inserted-node',physicalIdentity:false});
+  return pairs;
+}
+
 export function semanticDiff(before, after, { strictGeometry = false, strictFocus = false, tolerance = 2 } = {}) {
   const effects = [], ignored = [];
   if (!equal(before?.route, after?.route)) effects.push({ type: 'route', from: before?.route || null, to: after?.route || null, external: Boolean(before?.origin && after?.origin && before.origin !== after.origin) });
   if (!equal(before?.historyState,after?.historyState)) effects.push({type:'history-state',from:before?.historyState ?? null,to:after?.historyState ?? null});
   if (strictFocus && !equal(before?.focus,after?.focus)) effects.push({type:'focus',from:before?.focus ?? null,to:after?.focus ?? null});
   if (!equal(before?.cssFingerprint,after?.cssFingerprint)) effects.push({type:'stylesheet',from:before?.cssFingerprint ?? null,to:after?.cssFingerprint ?? null});
-  const left = new Map((before?.nodes || []).filter(n => !n.noise).map(n => [n.key,n]));
-  const right = new Map((after?.nodes || []).filter(n => !n.noise).map(n => [n.key,n]));
+  const pairs=correspondElements(before,after);
   const movements = [];
-  for (const key of new Set([...left.keys(), ...right.keys()])) {
-    const a = left.get(key), b = right.get(key), node = b || a;
-    const base = { key, selector: node.selector || null, frameIndex: node.frameIndex || 0 };
+  for (const pair of pairs) {
+    const a=pair.before,b=pair.after,node=b || a,key=node.key;
+    const base = { key, elementId:node.elementId || null, beforeElementId:a?.elementId || null, afterElementId:b?.elementId || null, correspondence:pair.basis, selector: node.selector || null, frameIndex: node.frameIndex || 0 };
     const push = (type, from, to, extra = {}) => effects.push({ ...base, type, from, to, ...extra });
     if (!a || !b) {
-      if (node.parent !== undefined) {
-        const other=a?right:left, own=a?left:right;
-        const parentKey=`${node.frameIndex || 0}:${node.parent}`;
-        const parent=own.get(parentKey) || own.get(node.parent);
-        if(!parent || other.has(parentKey) || other.has(node.parent)) push(a?'remove':'insert',a?node.elementId || node.key:null,b?node.elementId || node.key:null,{element:node,parent:node.parent,nextSibling:node.nextSibling});
-      } else if(Boolean(a?.visible)!==Boolean(b?.visible)) push('visibility',Boolean(a?.visible),Boolean(b?.visible));
+      if(node.elementId || node.parent!==undefined)push(a?'remove':'insert',a?node.elementId || key:null,b?node.elementId || key:null,{element:node,parentElementId:node.parentElementId || null,nextSiblingElementId:node.nextSiblingElementId || null});
+      else if(Boolean(a?.visible)!==Boolean(b?.visible))push('visibility',Boolean(a?.visible),Boolean(b?.visible));
       continue;
     }
+    if(a.parentElementId!==b.parentElementId || a.nextSiblingElementId!==b.nextSiblingElementId)push('move',{parentElementId:a.parentElementId,nextSiblingElementId:a.nextSiblingElementId},{parentElementId:b.parentElementId,nextSiblingElementId:b.nextSiblingElementId});
+    if(!equal(a.childElementIds,b.childElementIds) || !equal(a.shadowChildElementIds,b.shadowChildElementIds))push('children',{children:a.childElementIds,shadowChildren:a.shadowChildElementIds},{children:b.childElementIds,shadowChildren:b.shadowChildElementIds});
     if (Boolean(a.visible) !== Boolean(b.visible)) push('visibility', Boolean(a.visible), Boolean(b.visible));
     for (const [field,name] of [['expanded','aria-expanded'],['pressed','aria-pressed'],['checked','aria-checked'],['selected','aria-selected']]) {
       if (!equal(a[field],b[field])) push(typeof b[field] === 'boolean' || typeof a[field] === 'boolean' ? 'property' : 'aria', a[field] ?? null,b[field] ?? null,{ name: typeof b[field] === 'boolean' || typeof a[field] === 'boolean' ? field : name });
@@ -61,7 +79,7 @@ export function semanticDiff(before, after, { strictGeometry = false, strictFocu
       else if (Math.abs(dx)>tolerance || Math.abs(dy)>tolerance) movements.push({ ...base, type:'geometry',from:a.bbox,to:b.bbox,significant:true,dx,dy });
     }
   }
-  const positioned = [...left.values()].filter(n => n.bbox && right.get(n.key)?.bbox && (n.visible || right.get(n.key).visible)).length;
+  const positioned = pairs.filter(({before:a,after:b})=>a?.bbox && b?.bbox && (a.visible || b.visible)).length;
   if (!strictGeometry && movements.length === positioned && movements.length && movements.every(n => Math.abs(n.dx-movements[0].dx)<=1 && Math.abs(n.dy-movements[0].dy)<=1) && !before?.frames) ignored.push('uniform-scroll');
   else effects.push(...movements.map(({dx,dy,...effect})=>effect));
   return { effects, changed: effects.length > 0, ignored };

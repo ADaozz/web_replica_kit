@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { linkRuleStates } from './rule-state-linker.mjs';
 import { createCssRuleCollector } from './css-rule-capture.mjs';
 import { captureStructuredState } from './interaction-snapshot.mjs';
 import { discoverAllFrames } from './actionable-dom.mjs';
@@ -713,6 +714,7 @@ async function main() {
       writeJson('css/stylesheets.json',{schemaVersion:1,stylesheets:cssEvidence.stylesheets,resourceFiles:cssResourceFiles,cssomSnapshots:cssEvidence.cssomSnapshots,missing:cssEvidence.missing,budgets:cssEvidence.budgets}),
       writeJson('css/matched-rules.json',{schemaVersion:1,rules:cssEvidence.rules,snapshots:cssEvidence.snapshots}),
       writeJson('css/variables.json',{schemaVersion:1,elements:cssEvidence.variables}),
+      writeJson('relations/state-style.json',exploration.relations || linkRuleStates({...exploration,css:cssEvidence})),
       writeJson('interactions/controls.json',exploration?.controls || []),
       writeJson('interactions/states.json',exploration?.states || []),
       writeJson('interactions/transitions.json',exploration?.transitions || []),

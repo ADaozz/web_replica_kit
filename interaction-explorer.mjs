@@ -1,3 +1,4 @@
+import { linkRuleStates } from './rule-state-linker.mjs';
 import { createCssRuleCollector } from './css-rule-capture.mjs';
 import { protectExploration } from './exploration-safety.mjs';
 import fs from 'node:fs/promises';
@@ -167,6 +168,7 @@ export async function exploreInteractionGraph({
         transitions.push({
           from: state.id,
           to: next.state?.id || null,
+          beforeObservationId:before.observationId || null,afterObservationId:after.observationId || null,
           control: publicControl(control),
           action,
           effects: diff.effects,
@@ -180,6 +182,7 @@ export async function exploreInteractionGraph({
             transitions.push({
               from: next.state?.id || state.id,
               to: state.id,
+              beforeObservationId:after.observationId || null,afterObservationId:closed.after.observationId || null,
               control: publicControl(control),
               action: closed.action,
               effects: closed.diff.effects,
@@ -239,9 +242,21 @@ export async function explorePage(page, options = {}) {
   const origin = new URL(initialUrl).origin;
   const pendingWrites = [], journal = [], diagnostics = [], restorations = [];
   const css = options.cssCollector || await createCssRuleCollector(page,options.cssBudgets);
+  const observations=[],observedSnapshots=new Map();
+  const maxObservations=options.maxObservations ?? 256;
   const capture = async () => {
     const snapshot = page.evaluate ? await captureStructuredState(page) : {route:new URL(page.url()).pathname,nodes:[]};
     snapshot.cssFingerprint=await css.fingerprint(snapshot);
+    const signature=JSON.stringify([semanticHash(snapshot),snapshot.focus,snapshot.nodes.map(n=>[n.elementId,n.selector,n.hovered,n.focused])]);
+    let observed=observedSnapshots.get(signature);
+    if(!observed && observations.length<maxObservations) {
+      const id=`observation-${String(observations.length).padStart(4,'0')}`;
+      const evidence=await css.capture(snapshot,id);
+      snapshot.observationId=id;snapshot.cssSnapshotId=evidence.cssSnapshotId;
+      observed={id,snapshot,evidence};observations.push(observed);observedSnapshots.set(signature,observed);
+    }
+    if(observed) {snapshot.observationId=observed.id;snapshot.cssSnapshotId=observed.evidence.cssSnapshotId;}
+    else snapshot.missingCssReason='observation evidence budget exhausted';
     return snapshot;
   };
   const discover = () => discoverAllFrames(page, { allowSameOriginNavigation, pageOrigin: page.url() });
@@ -315,7 +330,7 @@ export async function explorePage(page, options = {}) {
       await restoreContext(entry.before);
       const snapshot = await capture();
       const success = semanticHash(snapshot) === semanticHash(entry.before);
-      restorations.push({ control: publicControl(candidate.control || control), action: candidate.navigationBack ? {kind:'history-back'} : candidate.leave ? {kind:'leave'} : candidate.action, fromHash:semanticHash(beforeInverse),toHash:semanticHash(snapshot),success,effects:semanticDiff(beforeInverse,snapshot).effects });
+      restorations.push({ control: publicControl(candidate.control || control), action: candidate.navigationBack ? {kind:'history-back'} : candidate.leave ? {kind:'leave'} : candidate.action, fromHash:semanticHash(beforeInverse),toHash:semanticHash(snapshot),beforeObservationId:beforeInverse.observationId || null,afterObservationId:snapshot.observationId || null,success,effects:semanticDiff(beforeInverse,snapshot).effects });
       if (success) return;
       if (semanticHash(snapshot) !== afterHash && !contextOnly(beforeInverse,snapshot)) throw new Error('restore failed: inverse reached an unknown state');
     }
@@ -348,7 +363,7 @@ export async function explorePage(page, options = {}) {
   }
   try {
     const result = await exploreInteractionGraph({
-      allowSameOriginNavigation, budgets: options.budgets || {}, discover, capture, perform, onState:async state=>({...await options.onState?.(state),...await css.capture(state.snapshot,state.id)}),
+      allowSameOriginNavigation, budgets: options.budgets || {}, discover, capture, perform, onState:async state=>({...await options.onState?.(state),cssSnapshotId:state.snapshot.cssSnapshotId || null}),
       restore: async state => {
         const beforeContext=await capture();
         await restoreContext(state.snapshot);
@@ -376,10 +391,14 @@ export async function explorePage(page, options = {}) {
     for (const inverse of restorations.filter(r=>r.success && !['history-back','leave'].includes(r.action.kind))) {
       const from=result.states.find(s=>s.hash===inverse.fromHash),to=result.states.find(s=>s.hash===inverse.toHash);
       if (!from || !to || !inverse.effects.length) continue;
-      result.transitions.push({from:from.id,to:to.id,control:inverse.control,action:inverse.action,effects:inverse.effects,confidence:'observed',classification:'allowed-safe',basis:'observed-restoration'});
+      result.transitions.push({from:from.id,to:to.id,control:inverse.control,action:inverse.action,effects:inverse.effects,confidence:'observed',classification:'allowed-safe',basis:'observed-restoration',beforeObservationId:inverse.beforeObservationId,afterObservationId:inverse.afterObservationId});
     }
     result.coverage=summarizeCoverage({controls:result.controls,checks:result.checks,transitions:result.transitions});
     result.budgetUsage.restorationActions=restorations.length;
-    return { ...result, css:css.export(), restorations, overlayDiagnostics: diagnostics };
+    result.observations=observations;
+    result.observationBudget={limit:maxObservations,captured:observations.length,truncated:observations.length>=maxObservations};
+    result.transitions.forEach((transition,index)=>transition.id=`transition-${String(index).padStart(4,'0')}`);
+    const cssEvidence=css.export();
+    return { ...result, css:cssEvidence, relations:linkRuleStates({...result,css:cssEvidence}), restorations, overlayDiagnostics: diagnostics };
   } finally { await safety.dispose(); if(!options.cssCollector)await css.dispose(); }
 }

@@ -30,6 +30,12 @@ test('recursive source exploration preserves layout evidence and blocks writes',
     assert.equal(result.restoreFailed,false,JSON.stringify(result.failures));
     assert.equal(states.length,result.states.length);assert.ok(result.states.every(s=>s.evidence.collected));
     assert.equal('model' in result,false);
+    const observed=new Map(result.observations.map(o=>[o.id,o]));
+    assert.ok(result.transitions.every(t=>observed.has(t.beforeObservationId) && observed.has(t.afterObservationId)));
+    for(const relation of result.relations.relations) {
+      const actual=observed.get(relation.afterObservationId);
+      for(const target of relation.targets) if(target.after)assert.ok(actual.snapshot.nodes.some(n=>n.elementId===target.after.elementId));
+    }
     for(const width of [390,768,1440]) {
       await page.setViewportSize({width,height:900});await page.goto(server.url);await page.click('#transform-trigger');
       const diagnostics=await collectOverlayDiagnostics(page,{width});

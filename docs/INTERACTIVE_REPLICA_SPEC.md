@@ -51,3 +51,11 @@ output/
 `css/stylesheets.json` 分别保存 CDP header / 文本版本、CSSOM 的 document / shadow 作用域与普通 / adopted 样式表顺序，以及 `css/original/` 中未经 URL 改写的网络响应。`assets/` 中的 CSS 仅为静态预览改写资源路径；原文件不会被覆盖。CSSOM 的规则树保留 import、条件和嵌套边界，源位置不可读时明确为 null。CDP 的规则顺序只表示协议提供的匹配顺序，不声称等于完整级联胜出顺序。
 
 每个状态的匹配记录包含稳定元素 ID、规则 ID、原始协议声明、继承、伪元素、计算样式及变量。未激活的 hover / focus / active 规则保留在样式表文本与 CSSOM 中；不会伪造“已经执行过”的状态。原生焦点轮廓不参与探索状态去重，完整计算样式仍作为 CSS 证据保存。
+
+## 身份与规则关联
+
+元素 ID 来自每个文档中的 WeakMap，证明的是实际 DOM 实例。替换后的元素即使作者 ID 相同，也只是同一 document / shadow root 内唯一 ID 的逻辑对应，`physicalIdentity` 为 false；位置选择器相同不能证明实例延续。
+
+图节点按语义状态去重。每次实际观测另有 observation ID，记录当时的元素实例、焦点、悬停与 CSS 匹配；转换通过 `beforeObservationId` / `afterObservationId` 引用它们。这样重建菜单产生的新节点不会错误引用早先同义状态中的旧实例。观测证据预算默认 256，超限保留转换和缺失原因。
+
+`relations/state-style.json` 按转换记录 trigger、显式 ARIA / popover 目标、属性和结构差异、前后真实匹配规则、增删规则及来源。简单选择器中直接依赖变化属性的部分可标记为 `selector-dependency-observed`；这不证明应用处理器的源码或其他视觉变化的因果。无显式目标关系、缺失匹配 CSS、未知节点对应等均保留 `unresolved`。CSSOM 补充规则也有 ID，但不会猜测它与某个 CDP 规则的对应。

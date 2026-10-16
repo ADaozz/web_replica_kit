@@ -4,7 +4,8 @@ import http from 'node:http';
 import {chromium} from 'playwright';
 import {createCssRuleCollector} from '../css-rule-capture.mjs';
 import {captureStructuredState} from '../interaction-snapshot.mjs';
-import {semanticHash} from '../state-diff.mjs';
+import {linkRuleStates} from '../rule-state-linker.mjs';
+import {semanticDiff,semanticHash} from '../state-diff.mjs';
 
 const external=`@layer base,theme;
 @layer base { :root { --accent: rgb(20, 40, 60) } #menu { color:var(--accent) } }
@@ -37,6 +38,12 @@ test('CDP captures source boundaries, matched rules, CSSOM changes, conditions, 
     await page.click('#toggle');
     const after=await captureStructuredState(page);after.cssFingerprint=await collector.fingerprint(after);await collector.capture(after,'open');
     const result=collector.export();
+    const linked=linkRuleStates({states:[{id:'closed',snapshot:before,evidence:{cssSnapshotId:'css:closed'}},{id:'open',snapshot:after,evidence:{cssSnapshotId:'css:open'}}],transitions:[{from:'closed',to:'open',control:{id:'toggle',selector:'#toggle'},action:{kind:'click'},effects:semanticDiff(before,after).effects}],css:result});
+    const target=linked.relations[0].targets.find(t=>t.after?.elementId===after.nodes.find(n=>n.selector==='#menu').elementId);
+    assert.equal(target.status,'observed');assert.equal(target.physicalIdentity,true);
+    assert.ok(target.selectorDependencies.some(d=>d.attribute==='data-state'));
+    assert.ok(target.matchedRules.added.some(r=>result.rules.find(rule=>rule.id===r.ruleId)?.selector==='#menu[data-state="open"]'));
+    assert.ok(target.matchedRules.removed.some(r=>r.source.url===source.url+'/base.css' && r.source.range));
     const author=result.stylesheets.find(s=>s.header?.sourceURL.endsWith('/base.css'));
     assert.ok(author);assert.ok(author.versions[0].text.includes('@layer base,theme'));
     const node=after.nodes.find(n=>n.selector==='#menu');

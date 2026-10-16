@@ -127,7 +127,12 @@ export async function createCssRuleCollector(page, { maxNodes = 1000, maxRules =
   async function fingerprint(snapshot) {
     const frames=[];
     for (const [index,frame] of page.frames().entries()) {
-      try {frames.push({frameIndex:index,...await frame.evaluate(readCssomEvidence,{maxRules})});}
+      try {
+        const evidence=await frame.evaluate(readCssomEvidence,{maxRules});
+        const annotate=(sheet,items)=>{for(const item of items){item.id=`cssom-rule:${hash({sheetId:sheet.id,path:item.path,cssText:item.cssText})}`;item.stylesheetId=sheet.id;if(item.children)annotate(sheet,item.children);}};
+        for(const sheet of evidence.sheets)annotate(sheet,sheet.rules);
+        frames.push({frameIndex:index,...evidence});
+      }
       catch(error) {gap({kind:'cssom-frame-unavailable',frameIndex:index,reason:String(error.message)});}
     }
     const versions=[];
