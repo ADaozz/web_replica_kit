@@ -10,10 +10,14 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
-import { discoverIcons, completeIcons } from './icon-capture.mjs';
+import { discoverIcons, completeIcons, inlineSpriteSymbols } from './icon-capture.mjs';
 import { annotateBasicInteractions, interactionScript } from './basic-interactions.mjs';
 import { analyzeIconInteractions } from './icon-interactions.mjs';
 import { recordIconInteractions, buildRecordedPreview, rewriteRecordedAssets, recordedInteractionScript } from './recorded-interactions.mjs';
+import { explorePage } from './interaction-explorer.mjs';
+import { injectOfflineRuntime } from './offline-runtime.mjs';
+import { injectSnapshotScrollRuntime } from './snapshot-scroll.mjs';
+import { finalizeSnapshotResources } from './snapshot-resources.mjs';
 
 const MB = 1024 * 1024;
 const MAX_PER_FILE = 12 * MB;
@@ -34,7 +38,7 @@ function parseArgs(argv) {
     }
   }
   if (!args.url) {
-    console.error('Usage: node capture.mjs --url https://example.com [--out site] [--width 1440] [--height 900] [--wait 1500] [--max-nodes 5000] [--headed] [--manual] [--record-icon-interactions] [--manual-icon-interactions] [--profile ./session] [--ready-selector SELECTOR] [--ready-text TEXT] [--executable /path/to/chromium]');
+    console.error('Usage: node capture.mjs --url https://example.com [--out site] [--width 1440] [--height 900] [--wait 1500] [--max-nodes 5000] [--headed] [--manual] [--record-icon-interactions] [--manual-icon-interactions] [--explore-interactions] [--allow-same-origin-navigation] [--profile ./session] [--ready-selector SELECTOR] [--ready-text TEXT] [--executable /path/to/chromium]');
     process.exit(1);
   }
   const parsed = new URL(args.url);
@@ -46,10 +50,15 @@ function parseArgs(argv) {
     height: clamp(args.height, 900, 320, 2160),
     wait: clamp(args.wait, 1500, 0, 30000),
     maxNodes: clamp(args['max-nodes'], 5000, 1, 20000),
-    headed: Boolean(args.headed || args.manual || args['manual-icon-interactions']),
+    headed: Boolean(args.headed || args.manual || args['manual-icon-interactions'] || args['explore-interactions']),
     manual: Boolean(args.manual),
     recordIconInteractions: Boolean(args['record-icon-interactions'] || args['manual-icon-interactions']),
     manualIconInteractions: Boolean(args['manual-icon-interactions']),
+    exploreInteractions: Boolean(args['explore-interactions']),
+    allowSameOriginNavigation: Boolean(args['allow-same-origin-navigation']),
+    exploreMaxStates: clamp(args['explore-max-states'], 24, 1, 80),
+    exploreMaxDepth: clamp(args['explore-max-depth'], 4, 1, 8),
+    exploreMaxActions: clamp(args['explore-max-actions'], 40, 1, 200),
     profile: typeof args.profile === 'string' ? path.resolve(args.profile) : null,
     readySelector: typeof args['ready-selector'] === 'string' ? args['ready-selector'] : null,
     readyText: typeof args['ready-text'] === 'string' ? args['ready-text'] : null,
@@ -304,9 +313,18 @@ export async function makeSnapshotHtml(page, assetMap, { enableBasicInteractions
         } catch {}
       }
     }
+    const scrollStates = [];
+    const definedElements = [];
     function cloneRendered(source) {
       const target = source.cloneNode(false);
       if (source.nodeType !== Node.ELEMENT_NODE) return target;
+      if (source.localName.includes('-') && source.matches(':defined')) definedElements.push(target);
+      // Scroll offsets are live DOM properties, absent from cloneNode/outerHTML.
+      // Zero matters too: CSS scroll snapping may otherwise select a different state.
+      if (source === document.scrollingElement || source.scrollLeft || source.scrollTop ||
+          source.scrollWidth > source.clientWidth || source.scrollHeight > source.clientHeight) {
+        scrollStates.push({ target, left: source.scrollLeft, top: source.scrollTop });
+      }
       // 动态 insertRule() 添加的规则不在文本内容中，需要读取样式表。
       if (source.localName === 'style' && source.sheet) {
         try { target.textContent = [...source.sheet.cssRules].map(r => r.cssText).join('\n'); return target; } catch {}
@@ -337,8 +355,9 @@ export async function makeSnapshotHtml(page, assetMap, { enableBasicInteractions
     all.filter(el => ['script', 'base'].includes(el.localName)).forEach(x => x.remove());
     all.filter(el => el.localName === 'meta' && el.hasAttribute('http-equiv')).forEach(x => {
       const value = (x.getAttribute('http-equiv') || '').toLowerCase();
-      if (value === 'refresh' || value === 'content-security-policy') x.remove();
+      if (value === 'refresh' || value === 'content-security-policy' || value === 'content-type') x.remove();
     });
+    all.filter(el => el.localName === 'meta' && el.hasAttribute('charset')).forEach(el => el.remove());
     all.filter(el => el.localName === 'iframe').forEach(el => {
       el.removeAttribute('srcdoc');
       el.setAttribute('src', 'about:blank');
@@ -371,12 +390,22 @@ export async function makeSnapshotHtml(page, assetMap, { enableBasicInteractions
       if (el.tagName.toLowerCase() === 'style') el.textContent = rewriteCSS(el.textContent);
       if (el.tagName.toLowerCase() === 'form') el.setAttribute('action', '#');
     });
+    for (const { target, left, top } of scrollStates) {
+      target.setAttribute('data-wrk-scroll-left', String(left));
+      target.setAttribute('data-wrk-scroll-top', String(top));
+    }
+    for (const target of definedElements) target.setAttribute('data-wrk-defined', '');
     const head = clone.querySelector('head');
     if (head) {
       const meta = document.createElement('meta');
       meta.setAttribute('http-equiv', 'Content-Security-Policy');
       meta.setAttribute('content', `script-src ${enabled ? "'sha256-" + scriptHash + "'" : "'none'"}; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'`);
       head.prepend(meta);
+      // The source response may have supplied its encoding only through HTTP headers.
+      // Snapshots are written as UTF-8 and must also decode correctly via file://.
+      const charset = document.createElement('meta');
+      charset.setAttribute('charset', 'utf-8');
+      head.prepend(charset);
     }
     if (enabled) {
       const script = document.createElement('script');
@@ -389,23 +418,28 @@ export async function makeSnapshotHtml(page, assetMap, { enableBasicInteractions
     const interactions = await snapshot.evaluate(annotateBasicInteractions, { applyBindings: enableBasicInteractions });
     interactions.runtimeEnabled = enableBasicInteractions;
     const html = await snapshot.evaluate(root => '<!DOCTYPE html>\n' + root.outerHTML);
-    return { html, interactions };
+    return { html: injectSnapshotScrollRuntime(finalizeSnapshotResources(html)), interactions };
   } finally { await snapshot.dispose(); }
 }
 
+async function waitForOperator(message) {
+  if (!process.stdin.isTTY) {
+    throw new Error('--manual needs an interactive terminal. Use --ready-selector for unattended runs.');
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try { await rl.question(message); }
+  finally { rl.close(); }
+}
+
+function navigationInterrupted(error) {
+  return /Execution context was destroyed|ERR_ABORTED|interrupted by another navigation|frame was detached/i.test(String(error?.message || error));
+}
+
 async function waitUntilReady(page, opts) {
-  if (opts.manual) {
-    if (!process.stdin.isTTY) {
-      throw new Error('--manual needs an interactive terminal. Use --ready-selector for unattended runs.');
-    }
-    console.log('\nThe browser is open. Log in normally if needed.');
-    console.log('Wait until the ACTUAL target UI (not the loading screen) is visible.');
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      await rl.question('Press ENTER here only after the target page is fully visible... ');
-    } finally {
-      rl.close();
-    }
+  if (opts.manual && !opts.exploreInteractions) {
+    console.log('\n浏览器已打开。如需登录，请在窗口里完成。');
+    console.log('等目标界面真正出现后再继续，不要停在加载或验证页。');
+    await waitForOperator('目标页面完全可见后，回到这里按 Enter... ');
   }
   if (opts.readySelector) {
     console.log('Waiting for visible selector:', opts.readySelector);
@@ -421,22 +455,33 @@ async function waitUntilReady(page, opts) {
     );
   }
   // 固定延迟无法判断应用是否就绪；人工或元素就绪信号之后只追加少量缓冲。
-  await page.waitForTimeout(opts.manual || opts.readySelector || opts.readyText ? 450 : opts.wait);
+  await page.waitForTimeout(opts.manual || opts.exploreInteractions || opts.readySelector || opts.readyText ? 450 : opts.wait);
 }
 
 async function getCaptureDiagnostics(page) {
-  return page.evaluate(() => {
-    const text = document.body?.innerText?.trim() || '';
-    const title = document.title || '';
-    const loadingScreen = text.length < 900 &&
-      /(just a moment|checking your browser|verify you are human|chatgpt is loading|正在加载|加载中|loading chatgpt)/i.test(title + '\n' + text.slice(0, 500));
-    return {
-      title,
-      bodyTextLength: text.length,
-      hasContentEditable: Boolean(document.querySelector('[contenteditable="true"]')),
-      loadingScreenPossible: loadingScreen
-    };
-  });
+  let lastError;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
+      return await page.evaluate(() => {
+        const text = document.body?.innerText?.trim() || '';
+        const title = document.title || '';
+        const loadingScreen = text.length < 900 &&
+          /(just a moment|checking your browser|verify you are human|chatgpt is loading|正在加载|加载中|loading chatgpt)/i.test(title + '\n' + text.slice(0, 500));
+        return {
+          title,
+          bodyTextLength: text.length,
+          hasContentEditable: Boolean(document.querySelector('[contenteditable="true"]')),
+          loadingScreenPossible: loadingScreen
+        };
+      });
+    } catch (error) {
+      lastError = error;
+      if (!navigationInterrupted(error) || attempt === 3) throw error;
+      await page.waitForTimeout(400);
+    }
+  }
+  throw lastError;
 }
 
 async function main() {
@@ -517,8 +562,20 @@ async function main() {
       void job.finally(() => pending.delete(job));
     });
 
-    console.log(`Opening ${opts.url}`);
-    await page.goto(opts.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    console.log(opts.headed ? `正在打开可见浏览器：${opts.url}` : `Opening ${opts.url}`);
+    const opened = page.goto(opts.url, { waitUntil: 'commit', timeout: 45000 }).catch(error => {
+      if (navigationInterrupted(error) || /Timeout/i.test(String(error?.message || error))) return;
+      throw error;
+    });
+    if (opts.exploreInteractions && process.stdin.isTTY) {
+      console.log('\n浏览器已打开。请先在窗口里完成验证并登录。');
+      console.log('按 Enter 时，窗口里已经显示的仓库、模型和侧栏会被原样保存，然后再尝试记录可展开的控件。');
+      await waitForOperator('登录完成、目标页面可见后，按 Enter 开始采集：');
+    }
+    await opened;
+    await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(error => {
+      if (!navigationInterrupted(error) && !/Timeout/i.test(String(error?.message || error))) throw error;
+    });
     await waitUntilReady(page, opts);
     const captureDiagnostics = await getCaptureDiagnostics(page);
     if (captureDiagnostics.loadingScreenPossible) {
@@ -531,10 +588,31 @@ async function main() {
     await page.waitForTimeout(400);
     await waitForPending(pending);
     const iconInteractions = await page.evaluate(analyzeIconInteractions);
+    let exploration = null;
+    let settledSnapshot = null;
+    let baselineLayout = opts.recordIconInteractions ? await inspectDOM(page, opts.maxNodes) : null;
+    let baselineOriginal = opts.recordIconInteractions ? await page.content() : null;
+    if (opts.exploreInteractions) {
+      try {
+        // 先冻结用户确认时的页面。后面的探索点击和整页恢复不能把仓库、模型、侧栏刷回加载中。
+        baselineLayout = await inspectDOM(page, opts.maxNodes);
+        baselineOriginal = await page.content();
+        await page.screenshot({ path: path.join(opts.out, 'screenshot.png'), fullPage: true, animations: 'disabled', timeout: 30000 }).catch(error => {
+          errors.push('Settled screenshot failed: ' + String(error.message || error));
+        });
+        settledSnapshot = await makeSnapshotHtml(page, currentMappings());
+        exploration = await explorePage(page, {
+          allowSameOriginNavigation: opts.allowSameOriginNavigation,
+          preserveSettledDocument: true,
+          budgets: { maxStates: opts.exploreMaxStates, maxDepth: opts.exploreMaxDepth, maxActions: opts.exploreMaxActions }
+        });
+        console.log(`交互探索：发现 ${exploration.coverage.discovered}，安全分母 ${exploration.coverage.denominator}，已观测 ${exploration.coverage.observed}，已验证 ${exploration.coverage.verified}。发现数量不是复刻完成数。`);
+      } catch (error) {
+        errors.push('Interaction explore failed: ' + String(error.message || error));
+      }
+    }
     const observedInventories = [];
     const observedControls = [];
-    const baselineLayout = opts.recordIconInteractions ? await inspectDOM(page, opts.maxNodes) : null;
-    const baselineOriginal = opts.recordIconInteractions ? await page.content() : null;
     const recording = opts.recordIconInteractions ? await recordIconInteractions({ page, out: opts.out, manual: opts.manualIconInteractions,
       snapshot: async () => {
         await waitForPending(pending);
@@ -603,7 +681,7 @@ async function main() {
     });
     try {
       if (recording?.states.length) await fs.copyFile(path.join(opts.out, recording.states[0].screenshot), path.join(opts.out, 'screenshot.png'));
-      else await page.screenshot({ path: path.join(opts.out, 'screenshot.png'), fullPage: true,
+      else if (!settledSnapshot) await page.screenshot({ path: path.join(opts.out, 'screenshot.png'), fullPage: true,
         animations: 'disabled', timeout: 30000 });
     } catch (error) {
       errors.push('Full-page screenshot failed: ' + String(error.message || error));
@@ -632,19 +710,36 @@ async function main() {
         rewriteCss(raw.replace(/@charset\s+[^;]+;/gi, ''), resource.url, mappings));
     }
 
-    const snapshot = await makeSnapshotHtml(page, mappings);
+    const snapshot = settledSnapshot
+      ? { ...settledSnapshot, html: rewriteRecordedAssets(settledSnapshot.html, mappings, opts.url) }
+      : await makeSnapshotHtml(page, mappings);
     if (recording?.states.length) {
       for (const state of recording.states) {
         state.html = rewriteRecordedAssets(state.html, mappings, opts.url);
         await fs.writeFile(path.join(opts.out, `${state.id}.html`), state.html);
       }
       snapshot.html = buildRecordedPreview(recording);
+    } else if (exploration?.model?.machines?.length) {
+      snapshot.html = injectOfflineRuntime(snapshot.html, exploration.model);
     }
-    const interactionReport = { ...snapshot.interactions, mode: recording ? 'recorded-original-states' : 'native-css-only',
+    const assetDir = path.join(opts.out, 'assets');
+    const spriteSources = [];
+    if (await fs.stat(assetDir).then(stat => stat.isDirectory()).catch(() => false)) {
+      for (const name of await fs.readdir(assetDir)) {
+        if (name.endsWith('.svg')) spriteSources.push(await fs.readFile(path.join(assetDir, name), 'utf8'));
+      }
+    }
+    snapshot.html = inlineSpriteSymbols(snapshot.html, spriteSources);
+    const interactionReport = { ...snapshot.interactions, mode: recording ? 'recorded-original-states' : exploration?.model?.machines?.length ? 'observed-local-runtime' : 'native-css-only',
       guessedHandlersEnabled: false, iconCandidates: iconInteractions.totalIcons,
       iconHosts: iconInteractions.interactiveHosts,
-      recording: recording ? { ...recording, states: recording.states.map(({ html, ...state }) => state), inventory: undefined } : null };
-    const writeJson = async (file, data) => fs.writeFile(path.join(opts.out, file), JSON.stringify(data, null, 2));
+      recording: recording ? { ...recording, states: recording.states.map(({ html, ...state }) => state), inventory: undefined } : null,
+      exploration: exploration ? { coverage: exploration.coverage, truncated: exploration.truncated, states: exploration.states.length, replicaVerified: false } : null };
+    const writeJson = async (file, data) => {
+      const full = path.join(opts.out, file);
+      await fs.mkdir(path.dirname(full), { recursive: true });
+      await fs.writeFile(full, JSON.stringify(data, null, 2));
+    };
     await Promise.all([
       fs.writeFile(path.join(opts.out, 'index.html'), snapshot.html),
       fs.writeFile(path.join(opts.out, 'interactions.js'), recording ? recordedInteractionScript :
@@ -660,6 +755,11 @@ async function main() {
       writeJson('design-tokens.json', layout.tokens),
       writeJson('assets.json', [...recorded.values()]),
       writeJson('icons.json', iconReport),
+      exploration ? writeJson('actions.json', { transitions: exploration.transitions, limitations: exploration.limitations, replicaVerified: false }) : null,
+      exploration ? writeJson('routes.json', { routes: exploration.routes }) : null,
+      exploration ? writeJson('interaction-coverage.json', exploration.coverage) : null,
+      exploration ? writeJson('interaction-failures.json', exploration.failures) : null,
+      exploration ? writeJson('states/graph.json', exploration.states) : null,
       writeJson('report.json', {
         capturedAt: new Date().toISOString(), sourceUrl: opts.url,
         finalUrl: page.url(), captureDiagnostics,
@@ -668,7 +768,7 @@ async function main() {
         basicInteractions: recording?.transitions.length || 0,
         interactionMode: interactionReport.mode,
         unresolvedInteractions: snapshot.interactions.unresolved.length,
-        interactionStatus: recording ? (recording.errors.length || recording.dropped || recording.ambiguousTransitions.length || recording.probe?.truncated || recording.probe?.attempts.some(a => a.errors.length) ? 'recording-needs-review' : 'recorded-states-unverified') : 'source-recording-required',
+        interactionStatus: recording ? (recording.errors.length || recording.dropped || recording.ambiguousTransitions.length || recording.probe?.truncated || recording.probe?.attempts.some(a => a.errors.length) ? 'recording-needs-review' : 'recorded-states-unverified') : exploration ? 'observed-unverified' : 'source-recording-required',
         readinessMode: opts.manual ? 'manual' :
           opts.readySelector ? 'selector' : opts.readyText ? 'text' : 'fixed-delay',
         viewport: layout.viewport, pageSize: layout.pageSize,

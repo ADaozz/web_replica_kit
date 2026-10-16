@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { completeIcons, iconFontSources, discoverIcons } from '../icon-capture.mjs';
+import { completeIcons, iconFontSources, discoverIcons, inlineSpriteSymbols } from '../icon-capture.mjs';
 
 const svg = Buffer.from('<svg><symbol id="search"/><symbol id="close"/></svg>');
 function inventory(resources = []) {
@@ -91,6 +91,34 @@ test('known icon font families with no exportable font source are incomplete', a
   const result = await completeIcons(adapters({ inventory: inv }));
   assert.equal(result.complete, false);
   assert.equal(result.missing[0].kind, 'unresolved-icon-font');
+});
+
+test('external sprite references become symbols in the same document', () => {
+  const html = inlineSpriteSymbols(
+    '<body><svg><use href="assets/sprite.svg#search"/></svg><use href="#close"/></body>',
+    ['<svg><symbol id="search"><path d="M0 0"/></symbol><symbol id="close"><path d="M1 1"/></symbol></svg>']
+  );
+  assert.equal(html.includes('assets/sprite.svg'), false);
+  assert.match(html, /id="wrk-sprite"/);
+  assert.match(html, /id="search"/);
+  assert.match(html, /id="close"/);
+  assert.equal(html.match(/id="search"/g).length, 1);
+});
+
+test('system symbol fallbacks are not missing icon fonts; custom symbol fonts remain required', async () => {
+  const inv = inventory();
+  inv.fonts = [{ family: 'segoe ui symbol' }, { family: 'apple symbols' }];
+  assert.equal((await completeIcons(adapters({ inventory: inv }))).complete, true);
+  inv.fonts.push({ family: 'site symbols' }, { family: 'site symbols' });
+  const result = await completeIcons(adapters({ inventory: inv }));
+  assert.deepEqual(result.missing, [{ kind: 'unresolved-icon-font', family: 'site symbols' }]);
+});
+
+test('sprite inlining preserves missing, conflicting, non-symbol and non-use references', () => {
+  const html = '<body><use href="assets/a.svg#missing"/><use href="assets/a.svg#conflict"/><use href="assets/a.svg#existing"/><svg id="existing"></svg><image href="assets/a.svg#ok"/><a href="assets/a.svg#ok">Image</a></body>';
+  const sources = ['<svg><symbol id="conflict"><path d="M0 0"/></symbol><symbol id="existing"><path d="M1 1"/></symbol><symbol id="ok"><path/></symbol></svg>',
+    '<svg><symbol id="conflict"><path d="M2 2"/></symbol></svg>'];
+  assert.equal(inlineSpriteSymbols(html, sources), html);
 });
 
 test('blob-backed icons are saved through the browser adapter', async () => {

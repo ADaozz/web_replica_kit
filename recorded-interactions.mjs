@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { analyzeIconInteractions } from './icon-interactions.mjs';
 import { probeSourceIconInteractions } from './source-interaction-probe.mjs';
+import { allowInlineScript, restoreSnapshotScroll } from './snapshot-scroll.mjs';
+import { finalizeSnapshotResources } from './snapshot-resources.mjs';
 
 // 用户在原页面实际操作，采集器只监听事件并保存稳定后的 DOM 与截图。
 export async function recordIconInteractions({ page, out, snapshot, settle = 1000, maxStates = 80, manual = false }) {
@@ -134,7 +136,7 @@ export function rewriteRecordedAssets(html, mappings, sourceURL) {
     (_all, _quote, value) => `url("${map(value).replace(/"/g, '%22')}")`)
     .replace(/(@import\s+)(['"])([^'"\n]+)\2/gi,
       (_all, prefix, quote, value) => `${prefix}${quote}${map(value)}${quote}`);
-  return html.replace(/<style\b[^>]*>[\s\S]*?<\/style>|<(?:[^>"']|"[^"]*"|'[^']*')*>/gi, tag => {
+  const rewritten = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>|<(?:[^>"']|"[^"]*"|'[^']*')*>/gi, tag => {
     if (/^<style\b/i.test(tag)) return tag.replace(/(^<style\b[^>]*>)([\s\S]*)(<\/style>$)/i,
       (_all, open, css, close) => open + rewriteCSS(css) + close);
     return tag.replace(/\b(src|href|poster|data|xlink:href|style|srcset|imagesrcset)\s*=\s*(["'])([\s\S]*?)\2/gi,
@@ -147,10 +149,11 @@ export function rewriteRecordedAssets(html, mappings, sourceURL) {
         return `${name}=${quote}${encode(rewritten, quote)}${quote}`;
       });
   });
+  return finalizeSnapshotResources(rewritten);
 }
 
 // 本地只回放原网页实际记录的状态，不按图标名称生成任何界面。
-export function installRecordedInteractions() {
+export function installRecordedInteractions(restoreScroll = () => {}) {
   const data = JSON.parse(document.getElementById('wrk-recorded-states').textContent);
   const states = new Map(data.states.map(s => [s.id, s]));
   let active = data.states[0]?.id;
@@ -185,6 +188,7 @@ export function installRecordedInteractions() {
     document.documentElement.replaceChildren(document.importNode(parsed.head, true), document.importNode(parsed.body, true));
     activateShadow(document); active = id;
     window.scrollTo(state.scroll.x, state.scroll.y);
+    restoreScroll();
     requestAnimationFrame(() => requestAnimationFrame(() => { switching = false; }));
   }
   for (const type of ['click', 'pointerover', 'pointerout', 'focusin', 'focusout', 'keydown']) {
@@ -203,14 +207,13 @@ export function installRecordedInteractions() {
   }
 }
 
-export const recordedInteractionScript = `(${installRecordedInteractions.toString()})();`;
+export const recordedInteractionScript = `(${installRecordedInteractions.toString()})(${restoreSnapshotScroll.toString()});`;
 
 export function buildRecordedPreview(recording) {
   if (!recording.states.length) throw new Error('没有可用的原网页状态。');
   const runtime = recordedInteractionScript;
-  const hash = crypto.createHash('sha256').update(runtime).digest('base64');
   const graph = validateRecordedTransitions(recording.transitions);
   const payload = JSON.stringify({ states: recording.states, transitions: graph.replayable }).replace(/</g, '\\u003c');
-  const html = recording.states[0].html.replace(/script-src\s+[^;\"]+/i, `script-src 'sha256-${hash}'`);
+  const html = allowInlineScript(recording.states[0].html, runtime);
   return html.replace(/<\/body>/i, `<script id="wrk-recorded-states" type="application/json">${payload}</script><script>${runtime}</script></body>`);
 }

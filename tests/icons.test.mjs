@@ -38,9 +38,14 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
       res.setHeader('Content-Type', 'image/svg+xml');
       res.end(pathname === '/sprite.svg' ? svg : mask); return;
     }
-    res.setHeader('Content-Type', 'text/html');
+    if (pathname === '/app.js') {
+      res.setHeader('Content-Type', 'text/javascript'); res.end('window.sourceOnly = true;'); return;
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end(`<!doctype html><html><head><base href="/nested/">
 <link rel="stylesheet" href="icons.css" integrity="${integrity}">
+<link rel="stylesheet" href="icons.css" crossorigin="anonymous">
+<link rel="modulepreload" href="../app.js">
 <style>@import "icons.css"; .inline { background: url('../sprite.svg?theme=light#image') center/contain; }</style></head>
 <body><span class="ready" style="display:none">Hidden readiness match</span><span class="ready">Ready</span>
 <svg><use href="../sprite.svg?theme=light#square"/></svg>
@@ -79,12 +84,14 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
     assert.ok(html.includes('.glyph'), 'adopted shadow styles serialized');
     const sprite = assets.find(asset => asset.url === sourceUrl + '/sprite.svg?theme=light');
     assert.ok(sprite, 'sprite resource saved');
-    assert.ok(html.includes(`href="${sprite.localPath}#square"`));
-    assert.ok(html.includes(`xlink:href="${sprite.localPath}#circle"`));
+    assert.ok(html.includes('href="#square"') && html.includes('<symbol id="square"'), 'sprite embedded for file previews');
+    assert.ok(html.includes('xlink:href="#circle"') && html.includes('<symbol id="circle"'));
     assert.ok(html.includes('href="#inline"'), 'inline references preserved');
     assert.ok(!html.includes('integrity='), 'rewritten CSS must not retain stale SRI');
+    assert.ok(!html.includes('crossorigin='), 'downloaded resources must load via file URLs');
+    assert.ok(!html.includes('rel="modulepreload"'), 'removed source scripts must not be preloaded');
     assert.ok(!html.includes(sourceUrl), 'all fixture resource references localized');
-    assert.ok(html.includes('@import "assets/'), 'inline CSS imports localized');
+    assert.match(html, /@import\s+(?:url\()?["']assets\//, 'inline CSS imports localized');
     const stylesheet = assets.find(asset => asset.type === 'stylesheet');
     const savedCss = await fs.readFile(path.join(out, stylesheet.localPath), 'utf8');
     assert.ok(savedCss.includes(`./${path.basename(sprite.localPath)}#image`));
@@ -95,7 +102,7 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
     preview = http.createServer(async (req, res) => {
       try {
         const filename = new URL(req.url, 'http://localhost').pathname;
-        const types = { '.svg': 'image/svg+xml', '.css': 'text/css', '.html': 'text/html' };
+        const types = { '.svg': 'image/svg+xml', '.css': 'text/css', '.html': 'text/html; charset=utf-8' };
         res.setHeader('Content-Type', types[path.extname(filename)] || 'text/html');
         res.end(await fs.readFile(path.join(out, filename === '/' ? 'index.html' : filename)));
       } catch { res.writeHead(404); res.end(); }
@@ -118,6 +125,12 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
     assert.equal(await page.locator('.external').evaluate(el => getComputedStyle(el).width), '40px');
     const screenshot = await page.screenshot({ fullPage: true, animations: 'disabled' });
     assert.deepEqual(failures, [], 'offline preview has no missing or remote requests');
+    if (!screenshot.equals(await fs.readFile(path.join(out, 'screenshot.png')))) {
+      const evidence = path.join(root, 'test-results', 'icon-pixel-diff');
+      await fs.mkdir(evidence, { recursive:true });
+      await fs.writeFile(path.join(evidence, 'preview.png'), screenshot);
+      await fs.copyFile(path.join(out, 'screenshot.png'), path.join(evidence, 'source.png'));
+    }
     assert.ok(screenshot.equals(await fs.readFile(path.join(out, 'screenshot.png'))),
       'offline preview pixels match captured source, including all icons');
     // 默认快照不根据属性猜测原站事件，只保留原生交互。
@@ -125,6 +138,18 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
     assert.equal(await page.locator('#panel').isVisible(), false);
     await page.locator('#details summary').click();
     assert.equal(await page.locator('#details').getAttribute('open'), '');
+    const filePage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const failedStyles = [];
+    filePage.on('requestfailed', req => {
+      if (req.resourceType() === 'stylesheet') failedStyles.push(req.url());
+    });
+    await filePage.route(/^https?:/, route => route.abort());
+    const { pathToFileURL } = await import('node:url');
+    await filePage.goto(pathToFileURL(path.join(out, 'index.html')).href);
+    assert.deepEqual(failedStyles, [], 'localized stylesheets load without file CORS errors');
+    assert.equal(await filePage.locator('body').evaluate(el => getComputedStyle(el).margin), '0px');
+    assert.equal(await filePage.locator('.external').evaluate(el => getComputedStyle(el).width), '40px');
+    assert.equal(await filePage.evaluate(() => window.sourceOnly), undefined);
   } finally {
     await browser?.close();
     if (source.listening) await new Promise(resolve => source.close(resolve));
@@ -137,7 +162,7 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
 test('automatic icon probing captures source-defined layout and replays it offline', async () => {
   const out = await fs.mkdtemp(path.join(os.tmpdir(), 'replica-source-states-'));
   const source = http.createServer((_req, res) => {
-    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end(`<!doctype html><html><head><style>
       #panel { width: 271px; height: 60px; background: #36a; }
       #tip { position: absolute; top: 100px; left: 40px; }

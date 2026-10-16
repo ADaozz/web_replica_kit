@@ -181,14 +181,42 @@ export async function completeIcons({ inventory, stylesheets = [], find, read, f
     }
     resources.push({ ...requirement, url: key, fragment, localPath: resource.localPath, status: 'saved' });
   }
+  const unresolvedFamilies = new Set();
   for (const font of inventory.fonts) {
-    if (/(?:icon|awesome|glyph|material|symbol)/i.test(font.family) &&
+    // Platform fallback fonts are not downloadable site icon fonts.
+    if (!/^(?:segoe ui symbol|apple symbols)$/i.test(font.family) &&
+        /(?:icon|awesome|glyph|material|symbol)/i.test(font.family) &&
+        !unresolvedFamilies.has(font.family) &&
         !requirements.some(r => r.kind === 'icon-font' && r.family === font.family)) {
       missing.push({ kind: 'unresolved-icon-font', family: font.family });
+      unresolvedFamilies.add(font.family);
     }
   }
   return { policy: 'icons-required-images-optional', complete: missing.length === 0,
     inspected: inventory.inspected, inlineSvg: inventory.inlineSvg, shadowRoots: inventory.shadowRoots,
     resources, missing, limitations: ['Raster icon detection uses size and semantic hints; ambiguous images require review.',
       'Closed shadow roots and icons that have not been rendered cannot be inspected.'] };
+}
+
+export function inlineSpriteSymbols(html, sources = []) {
+  const byId = new Map();
+  for (const source of sources) {
+    for (const match of String(source).matchAll(/<symbol\b[^>]*\bid="([^"]+)"[^>]*>[\s\S]*?<\/symbol>/g)) {
+      if (!byId.has(match[1])) byId.set(match[1], match[0]);
+      else if (byId.get(match[1]) !== match[0]) byId.set(match[1], null);
+    }
+  }
+  const present = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map(match => match[1]));
+  // Keep external references unless the matching symbol can actually be embedded.
+  // Images, links and non-symbol fragments must retain their own resource URLs.
+  const next = html.replace(/<use\b[^>]*>/gi, tag => tag.replace(
+    /((?:href|xlink:href)=")(?:\.\/)?assets\/[^"]+\.svg#([^"]+)"/g,
+    (reference, prefix, id) => byId.get(id) && !present.has(id) ? prefix + '#' + id + '"' : reference));
+  const needed = [];
+  for (const match of next.matchAll(/(?:href|xlink:href)="#([^"]+)"/g)) {
+    if (!present.has(match[1]) && byId.get(match[1]) && !needed.includes(match[1])) needed.push(match[1]);
+  }
+  if (!needed.length) return next;
+  const sprite = `<svg id="wrk-sprite" aria-hidden="true" width="0" height="0" style="position:absolute"><defs>${needed.map(id => byId.get(id)).join('')}</defs></svg>`;
+  return next.replace(/<body([^>]*)>/i, `<body$1>${sprite}`);
 }

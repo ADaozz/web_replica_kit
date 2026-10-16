@@ -115,6 +115,26 @@ try {
         canvasElements: document.querySelectorAll('canvas').length,
         pageSize: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight }
       }));
+      const sourceLayout = JSON.parse(await fs.readFile(path.join(directory, 'layout.json'), 'utf8'));
+      result.layout = await page.evaluate(nodes => {
+        let checked = 0;
+        let missing = 0;
+        let changed = 0;
+        const differences = [];
+        for (const node of nodes.filter(node => node.visible && node.rect.width > 0 && node.rect.height > 0)) {
+          let el;
+          try { el = document.querySelector(node.selector); } catch { continue; }
+          checked++;
+          if (!el) { missing++; continue; }
+          const rect = el.getBoundingClientRect();
+          const actual = { x: rect.x + scrollX, y: rect.y + scrollY, width: rect.width, height: rect.height };
+          if (Object.keys(actual).some(key => Math.abs(actual[key] - node.rect[key]) > 2)) {
+            changed++;
+            if (differences.length < 30) differences.push({ selector: node.selector, expected: node.rect, actual });
+          }
+        }
+        return { checked, missing, changed, matches: missing === 0 && changed === 0, tolerancePx: 2, differences };
+      }, sourceLayout.nodes);
       const screenshot = await page.screenshot({ path: path.join(directory, 'preview.png'), fullPage: true,
         animations: 'disabled', timeout: 30000 });
       result.screenshotIdentical = screenshot.equals(await fs.readFile(path.join(directory, 'screenshot.png')));
@@ -128,7 +148,7 @@ try {
         !result.icons.complete ? 'icons-incomplete' :
         result.resourceStatus !== 'no-runtime-failures' ||
         result.capture.errors.length || result.capture.capped || result.interactions.unresolved.length ||
-        !result.screenshotIdentical ? 'needs-review' : 'passed';
+        !result.layout.matches || !result.screenshotIdentical ? 'needs-review' : 'passed';
       await fs.writeFile(path.join(directory, 'compare.html'), `<!doctype html><meta charset="utf-8"><title>Source / offline preview</title>
 <style>body{font:16px system-ui}main{display:flex;gap:16px}section{width:50%;min-width:0}img{width:100%}</style>
 <p>Source / offline preview. Any visual difference requires review.</p><main><section><h2>Source</h2><img src="screenshot.png"></section><section><h2>Offline preview</h2><img src="preview.png"></section></main>`);

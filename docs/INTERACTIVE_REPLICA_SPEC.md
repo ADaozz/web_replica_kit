@@ -5,6 +5,13 @@
 
 原有 icon 下载、SVG sprite、CSS mask、字体、Shadow DOM 和响应式采集继续使用。
 
+### 离线初始渲染状态
+快照除 HTML 属性外，还保存文档、嵌套容器和开放 Shadow DOM 中的滚动位置（含零位置）。离线初始化在布局就绪后恢复这些位置，以保留滚动驱动动画对应的尺寸和可见状态；恢复时临时关闭平滑滚动和滚动吸附，随后还原样式，用户开始操作后不再执行延迟复位。
+
+已升级的自定义元素会保留 `:defined` 样式条件，未升级的元素不补定义。离线定义仅为空类，配合已序列化的 Shadow DOM 保留初始渲染，不代表恢复了组件原有 JavaScript 行为。快照显式声明 UTF-8，避免丢失原响应头编码后产生乱码和文字尺寸变化。初始化与交互脚本各自通过 CSP 哈希授权。
+
+运行 `npm run test:scroll` 验证滚动、编码、Shadow DOM、脚本兼容性和文件/HTTP 预览；`npm run test:sites -- --only bootstrap-sidebars,bootstrap-dashboard,shoelace-dropdown` 对无需登录的公开页采集并生成布局与截图对比。公开页报告中的初始渲染一致不等于交互已验证。
+
 ## 2. 控件发现：模仿 Playwright，而不是猜按钮
 ### 2.1 全量候选来源
 在 **每个已知页面状态** 中遍历 DOM 与 open ShadowRoot，并检查每个 frame：
