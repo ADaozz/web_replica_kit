@@ -42,7 +42,7 @@ node scripts/capture.mjs --url https://example.com/products \
   --out ./output/manual --manual --ready-selector main
 ```
 
-`--manual` 会打开可见浏览器，加载期间会缓存静态资源，但不会生成 DOM、布局或截图。用户准备好目标页面后，在运行命令的终端按 Enter，随后执行 ready-selector 检查、额外等待、广告/加载清理和单次采集。`--headed` 仅显示浏览器，仍自动采集；`--manual` 才会等待确认。discover 也支持 manual，用于用户先完成验证再发现导航。
+`--manual` 会打开可见浏览器，加载期间会缓存静态资源，但不会生成 DOM、布局或截图。用户准备好目标页面后，在运行命令的终端按 Enter，随后执行 ready-selector 检查、额外等待、按显式参数执行清理和单次采集。`--headed` 仅显示浏览器，仍自动采集；`--manual` 才会等待确认。discover 也支持 manual，用于用户先完成验证再发现导航。
 
 确认提示仅写入 stderr，最终 stdout 仍是一行 JSON。必须在可交互终端和有桌面显示的环境中运行；非 TTY 输入明确失败，不会静默跳过确认。终端 EOF、取消或关闭浏览器会中止，不生成未经确认的快照。会话为临时浏览器上下文，不导出 Cookie 或私人 profile。没有页面控件点击自动化，也不会自动绕过验证。
 
@@ -59,11 +59,11 @@ node scripts/capture.mjs --url https://example.com/products \
 | `--max-nodes` | 5000，最大 20000；仅 capture 使用，截断明确报告 |
 | `--headless`, `--headed` | 默认无界面；二者互斥。headed 只显示浏览器，不等待确认 |
 | `--manual` | 有头模式，用户在终端按 Enter 确认后再采集或发现；与 headless 互斥 |
-| `--remove-selector` | capture 专用，额外删除匹配的 CSS 选择器；逗号可组合多个选择器，支持 Open Shadow DOM |
-| `--keep-noise` | capture 专用，关闭默认广告/加载清理；显式 remove-selector 仍生效 |
+| `--remove-selector` | capture 专用，只删除匹配的 CSS 选择器；逗号可组合多个选择器，支持 Open Shadow DOM |
+| `--clean-noise` | capture 专用，显式启用现有广告/加载/推广弹窗清理规则 |
 | `--executable` | 可选 Chromium 可执行文件路径 |
 
-初始页面自己的重定向和渲染请求正常执行；不会点击或 Hover 控件，不会滚动加载其他 UI，不会遍历发现的网页链接。默认目标状态就是等待完成后实际渲染的页面，并在取证前清理明确的广告、推广弹窗和纯加载占位层。清理不点击关闭按钮，不继续等待或探索其他状态；DOM、布局、截图与 HTML 均对应清理后的同一页面。删除记录写入 `report.cleanup`。普通按钮内的加载图标、真实进度条和含正文的加载容器会保留。
+初始页面自己的重定向和渲染请求正常执行；不会点击或 Hover 控件，不会滚动加载其他 UI，不会遍历发现的网页链接。默认保留等待后实际渲染的全部 UI，包括广告、推广弹窗、Modal 和加载层；无清理参数时跳过清理流程，report.cleanup.removedCount 为 0。只有用户明确要求时才使用 --remove-selector 或 --clean-noise，执行一次且不点击、不导航、不重新加载。DOM、布局、截图与 HTML 对应所选状态，删除记录写入 report.cleanup。
 
 站点特有的浮层可显式指定，例如：
 
@@ -72,7 +72,7 @@ node scripts/capture.mjs --url https://example.com --out ./output/clean \
   --remove-selector '#campaign-popup, .sponsor-panel, #startup-loader'
 ```
 
-规则采用保守识别，未标记的广告可能保留。移除加载层不会生成尚未加载的正文；应先用 `--ready-selector` 等待真正的主内容出现。若要采集原始广告或加载状态，使用 `--keep-noise`。初始加载期间已下载的广告资源可能仍保留，清理不是网络广告拦截器。
+`--remove-selector` 只删除指定元素；`--clean-noise` 才会应用现有保守规则及其孤立遮罩/滚动锁修复。两者可以组合，均支持 Open Shadow DOM。不合法选择器返回错误。移除加载层不会生成正文，应先使用 `--ready-selector` 等待。清理不是网络广告拦截器，已下载资源可能仍保留。
 
 stdout 只输出一行 JSON；错误诊断写入 stderr。退出码稳定：`0` 为 `ok`，`2` 为 `partial`（证据可用但有预算截断或缺失），`1` 为 `failed`。调用方应解析 JSON，并读取 `report.json`；不能把退出码 2 当作完全失败或完全成功。失败可能留下未完成文件，重新运行必须换空目录。
 

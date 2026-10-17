@@ -24,7 +24,7 @@ test('independent discovery and capture produce safe schema 3, one page and exac
  let browser;try{
  const navOut=path.join(directory,'nav');await discover(parseArgs(['--url',url,'--out',navOut,'--wait','0']));
  const nav=JSON.parse(await fs.readFile(path.join(navOut,'navigation.json')));assert.equal(nav.entries.find(e=>e.url.endsWith('/never')).sources.length,2);assert.ok(!visited.includes('/never'));
- const out=path.join(directory,'capture');const result=await command(['--url',url,'--out',out,'--wait','0']);assert.equal(result.code,0,JSON.stringify(result.result));assert.equal(result.result.status,'ok');
+ const out=path.join(directory,'capture');const result=await command(['--url',url,'--out',out,'--wait','0','--clean-noise']);assert.equal(result.code,0,JSON.stringify(result.result));assert.equal(result.result.status,'ok');
  const read=async f=>JSON.parse(await fs.readFile(path.join(out,f)));
  const report=await read('report.json');assert.equal(report.schemaVersion,3);assert.equal(report.previewGenerated,true);assert.equal(report.cleanup.removedCount,2);
  const assets=await read('assets.json');assert.ok(!assets.resources.some(r=>r.type==='script'));assert.ok(!visited.includes('/never'));
@@ -53,7 +53,7 @@ test('manual gate produces no snapshot before confirmation and captures the conf
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'replica-confirm-'));
  const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/html');res.end('<main>Before confirmation</main><div class="ad-banner">Remove me</div>');});await new Promise(r=>server.listen(0,'127.0.0.1',r));
  let unblock,entered;const gate=new Promise(r=>unblock=r),ready=new Promise(r=>entered=r);
- const opts=parseArgs(['--url',`http://127.0.0.1:${server.address().port}/`,'--out',directory,'--wait','0']);
+ const opts=parseArgs(['--url',`http://127.0.0.1:${server.address().port}/`,'--out',directory,'--wait','0','--clean-noise']);
  // Test the actual capture gate in headless CI; CLI --manual separately forces headed.
  const running=capture({...opts,manual:true,confirmReady:async page=>{entered();await gate;await page.locator('main').evaluate(el=>el.textContent='Confirmed content');}});
  try{
@@ -72,4 +72,22 @@ test('serialization never accepts a returned function or an undefined outerHTML 
  await page.evaluate(()=>Object.defineProperty(Element.prototype,'outerHTML',{configurable:true,get(){return undefined;}}));
  await assert.rejects(makeSnapshotHtml(page,{}),/Invalid static preview/);
  }finally{await browser.close();}
+});
+
+test('default capture preserves ads, modal and scroll lock; explicit selectors remove only selected UI',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'replica-preserve-'));
+ const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/html');res.end('<!doctype html><body class="modal-open" style="overflow:hidden"><main>Page</main><div class="ad-banner">AD_REFERENCE</div><div role="dialog" style="position:fixed;top:100px">Special offer</div><div class="modal-backdrop">Backdrop</div><x-host></x-host><script>document.querySelector("x-host").attachShadow({mode:"open"}).innerHTML=\'<div class="ad-banner" id="shadow-ad">SHADOW_AD_REFERENCE</div>\';</script>');});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+ try{
+ const url=`http://127.0.0.1:${server.address().port}/`;
+ const normal=path.join(dir,'normal');assert.equal((await command(['--url',url,'--out',normal,'--wait','0'])).code,0);
+ const report=JSON.parse(await fs.readFile(path.join(normal,'report.json')));assert.equal(report.cleanup.removedCount,0);assert.equal(report.cleanup.automatic,false);
+ const html=await fs.readFile(path.join(normal,'index.html'),'utf8');for(const text of ['AD_REFERENCE','SHADOW_AD_REFERENCE','Special offer','Backdrop'])assert.ok(html.includes(text));
+ const components=JSON.stringify(JSON.parse(await fs.readFile(path.join(normal,'components.json'))));assert.ok(components.includes('AD_REFERENCE'));
+ browser=await chromium.launch();const page=await browser.newPage({viewport:report.viewport});await page.goto(pathToFileURL(path.join(normal,'index.html')).href);assert.deepEqual(await page.screenshot(),await fs.readFile(path.join(normal,'screenshot.png')));assert.equal(await page.locator('body').evaluate(e=>getComputedStyle(e).overflow),'hidden');
+ const selected=path.join(dir,'selected');assert.equal((await command(['--url',url,'--out',selected,'--wait','0','--remove-selector','#shadow-ad,[role=dialog]'])).code,0);
+ const cleaned=JSON.parse(await fs.readFile(path.join(selected,'report.json')));assert.equal(cleaned.cleanup.removedCount,2);assert.ok(cleaned.cleanup.removed.every(e=>e.reason==='user-selector'));
+ const output=await fs.readFile(path.join(selected,'index.html'),'utf8');assert.ok(output.includes('AD_REFERENCE'));assert.ok(output.includes('Backdrop'));assert.ok(!output.includes('SHADOW_AD_REFERENCE'));assert.ok(!output.includes('Special offer'));
+ const invalid=await command(['--url',url,'--out',path.join(dir,'invalid'),'--wait','0','--remove-selector','[']);assert.equal(invalid.code,1);assert.match(invalid.result.error,/selector/i);
+ }finally{await browser?.close();await new Promise(r=>server.close(r));await fs.rm(dir,{recursive:true,force:true});}
 });

@@ -11,8 +11,8 @@ test('manual confirmation waits for Enter and writes prompts only to its diagnos
  await new Promise(r=>setImmediate(r));assert.equal(confirmed,false);assert.match(prompt,/Press Enter/);
  input.write('\n');await wait;assert.equal(confirmed,true);
  assert.equal(parseArgs(['--url','https://example.test','--manual']).headed,true);
- assert.equal(parseArgs(['--url','https://example.test','--manual']).keepNoise,false);
- assert.equal(parseArgs(['--url','https://example.test','--keep-noise']).keepNoise,true);
+ assert.equal(parseArgs(['--url','https://example.test','--manual']).cleanNoise,false);
+ assert.equal(parseArgs(['--url','https://example.test','--clean-noise']).cleanNoise,true);
  assert.throws(()=>parseArgs(['--url','https://example.test','--manual','--headless']),/conflict/);
 });
 test('manual mode fails explicitly on non-TTY input, EOF or closing browser',async()=>{

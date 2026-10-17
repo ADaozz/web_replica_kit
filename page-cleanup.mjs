@@ -1,7 +1,7 @@
 // One pass over the settled page. Never clicks, dismisses dialogs, or waits for
 // another state. Only explicit noise markers and caller-selected nodes change.
-export async function cleanPage(page,{keepNoise=false,removeSelector}={}) {
-  return page.evaluate(({keepNoise,removeSelector})=>{
+export async function cleanPage(page,{cleanNoise=false,removeSelector}={}) {
+  return page.evaluate(({cleanNoise,removeSelector})=>{
     if(removeSelector)document.createDocumentFragment().querySelector(removeSelector);
     const removed=[],candidates=[],roots=[];
     const ads='#carbonads,#carbon-custom,.carbon-ad,.adsbygoogle,ins[data-ad-client],[data-ad-slot],.advertisement,.ad-banner,.ad-container,[aria-label="advertisement" i],[aria-label="广告"]';
@@ -21,9 +21,9 @@ export async function cleanPage(page,{keepNoise=false,removeSelector}={}) {
         const label=()=>((el.getAttribute('aria-label')||el.getAttribute('label')||'')+' '+(el.textContent || '')).trim();
         let reason;
         if(removeSelector&&el.matches(removeSelector))reason='user-selector';
-        else if(!keepNoise&&el.matches(ads))reason='advertisement';
-        else if(!keepNoise&&el.matches(loaders)&&!el.querySelector('main,article,nav,form')&&label().length<200&&(!label()||/loading|please wait|加载|请稍候/i.test(label())))reason='loading-placeholder';
-        else if(!keepNoise&&el.matches(dialogs)&&visible(el)){
+        else if(cleanNoise&&el.matches(ads))reason='advertisement';
+        else if(cleanNoise&&el.matches(loaders)&&!el.querySelector('main,article,nav,form')&&label().length<200&&(!label()||/loading|please wait|加载|请稍候/i.test(label())))reason='loading-placeholder';
+        else if(cleanNoise&&el.matches(dialogs)&&visible(el)){
           const title=el.getAttribute('aria-label')||el.getAttribute('label')||el.querySelector('h1,h2,h3,[slot=label]')?.textContent||'';
           if(promotional.test(label())||/newsletter|广告|推广|促销/i.test(title)||/^newsletter/i.test(label()))reason='promotional-dialog';
         }
@@ -39,7 +39,7 @@ export async function cleanPage(page,{keepNoise=false,removeSelector}={}) {
     }
     // A removed modal can otherwise leave its page permanently scroll-locked.
     const remainingDialog=roots.some(root=>(root===document||root.host?.isConnected)&&[...root.querySelectorAll(dialogs)].some(visible));
-    if(removedBlocking&&!remainingDialog) {
+    if(cleanNoise&&removedBlocking&&!remainingDialog) {
       for(const root of roots)if(root===document||root.host?.isConnected)for(const el of root.querySelectorAll('.modal-backdrop,.ant-modal-mask')) {
         removed.push({selector:selector(el),tag:el.localName,reason:'orphaned-backdrop'});el.remove();
       }
@@ -49,6 +49,6 @@ export async function cleanPage(page,{keepNoise=false,removeSelector}={}) {
         if(el.style.overflow==='hidden')el.style.removeProperty('overflow');
       }
     }
-    return {automatic:!keepNoise,removeSelector:removeSelector || null,removedCount:removed.length,removed,limitations:['Conservative markers only; unmarked ads and loaders may remain. Removing a loader does not render unfinished content. No controls were clicked.']};
-  },{keepNoise,removeSelector});
+    return {automatic:!cleanNoise,removeSelector:removeSelector || null,removedCount:removed.length,removed,limitations:['Conservative markers only; unmarked ads and loaders may remain. Removing a loader does not render unfinished content. No controls were clicked.']};
+  },{cleanNoise,removeSelector});
 }

@@ -1,7 +1,7 @@
 import path from 'node:path';
 export function parseArgs(argv) {
   const values = {};
-  const flags = new Set(['headed','headless','keep-noise','manual']);
+  const flags = new Set(['headed','headless','clean-noise','manual']);
   const supported = new Set(['url','out','width','height','wait','ready-selector','ready-timeout','max-nodes','executable','remove-selector',...flags]);
   for(let i=0;i<argv.length;i++) {
     const key=argv[i].replace(/^--/,'');
@@ -20,5 +20,5 @@ export function parseArgs(argv) {
     if(!Number.isInteger(n)||n<min||n>max)throw new Error(`Invalid --${key}: expected ${min}..${max}`);
     return n;
   };
-  return {url:url.href,out:path.resolve(values.out || 'output'),width:number('width',1440,1,3840),height:number('height',900,1,2160),wait:number('wait',1500,0,30000),maxNodes:number('max-nodes',5000,1,20000),readyTimeout:number('ready-timeout',30000,1,300000),keepNoise:!!values['keep-noise'],removeSelector:values['remove-selector'],readySelector:values['ready-selector'],manual:!!values.manual,headed:!!(values.headed || values.manual),executablePath:values.executable};
+  return {url:url.href,out:path.resolve(values.out || 'output'),width:number('width',1440,1,3840),height:number('height',900,1,2160),wait:number('wait',1500,0,30000),maxNodes:number('max-nodes',5000,1,20000),readyTimeout:number('ready-timeout',30000,1,300000),cleanNoise:!!values['clean-noise'],removeSelector:values['remove-selector'],readySelector:values['ready-selector'],manual:!!values.manual,headed:!!(values.headed || values.manual),executablePath:values.executable};
 }

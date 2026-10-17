@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {parseArgs} from '../scripts/cli-options.mjs';
 test('CLI rejects invalid arguments with stable machine-readable failure',()=>{
- for(const args of [[],['--url','https://a','--manual'],['--url','file:///tmp/a'],['--url','https://a','--explore-interactions'],['--url','https://a','--width','no'],['--url','https://a','--headed','--headless']]) {
+ for(const args of [[],['--url','https://a','--keep-noise'],['--url','https://a','--manual'],['--url','file:///tmp/a'],['--url','https://a','--explore-interactions'],['--url','https://a','--width','no'],['--url','https://a','--headed','--headless']]) {
   const result=spawnSync(process.execPath,['scripts/capture.mjs',...args],{encoding:'utf8'});
   assert.equal(result.status,1);assert.equal(JSON.parse(result.stdout).status,'failed');
  }

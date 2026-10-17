@@ -452,7 +452,7 @@ async function captureInto(opts) {
     await page.waitForTimeout(opts.wait);
     timings.load=performance.now()-started;
     let phase=performance.now();
-    const cleanup=await cleanPage(page,opts);
+    const cleanup=opts.cleanNoise || opts.removeSelector?await cleanPage(page,opts):{automatic:false,removeSelector:null,removedCount:0,removed:[],limitations:[]};
     timings.cleanup=performance.now()-phase;phase=performance.now();
     const dom=await captureDOM(page,{maxNodes:opts.maxNodes});
     timings.dom=performance.now()-phase;phase=performance.now();
