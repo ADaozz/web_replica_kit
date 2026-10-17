@@ -107,13 +107,9 @@ export async function auditSnapshot(directory) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const results = [];
   for (const directory of process.argv.slice(2)) {
     const result = await auditSnapshot(directory);
-    results.push(result);
     console.log(path.basename(directory), JSON.stringify(result.stats), 'issues:', result.issueCount);
+    if(!result.validPreview)process.exitCode=1;
   }
-  if(results.some(result=>!result.validPreview))process.exitCode=1;
-  await fs.mkdir('test-results', { recursive: true });
-  await fs.writeFile('test-results/existing-snapshots.json', JSON.stringify(results, null, 2));
 }

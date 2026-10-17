@@ -98,7 +98,6 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {
     return times;
   });
   const render = ({ mappings,stylesheetSources,maxCanvasFileBytes,maxCanvasTotalBytes,videoTimes }) => {
-    const localMap = mappings;
     const base = document.baseURI;
     function mapURL(raw) {
       const val = (raw || '').trim();
@@ -108,7 +107,7 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {
         const parsed = new URL(absolute);
         const fragment = parsed.hash;
         parsed.hash = '';
-        return localMap[parsed.href] ? localMap[parsed.href] + fragment : absolute;
+        return mappings[parsed.href] ? mappings[parsed.href] + fragment : absolute;
       } catch { return val; }
     }
     function rewriteCSS(cssText) {
@@ -117,7 +116,6 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {
         .replace(/(@import\s+)(['"])([^'"\n]+)\2/gi, (_all, prefix, quote, value) =>
           `${prefix}${quote}${mapURL(value)}${quote}`);
     }
-    function rewriteSrcset(srcset) {return rewriteSrcsetUrls(srcset,mapURL);}
     function appendAdoptedStyles(source, target) {
       for (const sheet of source.adoptedStyleSheets || []) {
         try {
@@ -268,7 +266,7 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {
         }
       }
       for (const attr of ['srcset', 'imagesrcset']) {
-        if (el.hasAttribute(attr)) el.setAttribute(attr, rewriteSrcset(el.getAttribute(attr)));
+        if (el.hasAttribute(attr)) el.setAttribute(attr, rewriteSrcsetUrls(el.getAttribute(attr),mapURL));
       }
       if (el.hasAttribute('style')) el.setAttribute('style', rewriteCSS(el.getAttribute('style')));
       if (el.tagName.toLowerCase() === 'style') el.textContent = rewriteCSS(el.textContent);

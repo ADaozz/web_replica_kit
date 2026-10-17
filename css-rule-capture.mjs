@@ -15,11 +15,11 @@ export async function captureStylesheets(page) {
       try{for(const rule of sheet.cssRules)if(rule.styleSheet)readImport(rule.styleSheet,scope,item.id);}catch{}
     }
     function readImport(imported,scope,parent){sheet(imported,scope);const item=stylesheets.find(s=>s.scope===scope&&s.url===imported.href);if(item)item.importedBy=parent;}
-    function root(root,scope) {
-      for(const el of root.querySelectorAll('style,link[rel~=stylesheet]'))sheet(el.sheet,scope,false,el);
-      for(const s of root.adoptedStyleSheets || [])sheet(s,scope,true);
-      let i=0;for(const el of root.querySelectorAll('*'))if(el.shadowRoot)rootWalk(el.shadowRoot,scope+'/shadow-'+(++i));
+    function root(scopeRoot,scope) {
+      for(const el of scopeRoot.querySelectorAll('style,link[rel~=stylesheet]'))sheet(el.sheet,scope,false,el);
+      for(const s of scopeRoot.adoptedStyleSheets || [])sheet(s,scope,true);
+      let i=0;for(const el of scopeRoot.querySelectorAll('*'))if(el.shadowRoot)root(el.shadowRoot,scope+'/shadow-'+(++i));
     }
-    const rootWalk=root;root(document,'document');return {stylesheets};
+    root(document,'document');return {stylesheets};
   });
 }
