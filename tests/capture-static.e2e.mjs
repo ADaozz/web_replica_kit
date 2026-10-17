@@ -30,6 +30,9 @@ test('independent discovery and capture produce safe schema 3, one page and exac
  const assets=await read('assets.json');assert.ok(!assets.resources.some(r=>r.type==='script'));assert.ok(!visited.includes('/never'));
  const css=await read('styles/stylesheets.json');assert.equal(css.network.length,1);assert.match(await fs.readFile(path.join(out,css.network[0].originalPath),'utf8'),/ORIGINAL_CSS/);
  const html=await fs.readFile(path.join(out,'index.html'),'utf8');for(const secret of ['SOURCE_BUNDLE_SENTINEL','HYDRATION_SECRET','COMMENT_SECRET','HANDLER_SECRET','CSRF_SECRET','API_SECRET','PRIVATE_COOKIE','AD_NOISE'])assert.ok(!html.includes(secret),secret);
+ const evidence=await read('components.json'),layout=await read('layout.json'),computed=await read('styles/computed.json');
+ assert.equal(evidence.elements[0].tag,'body');assert.equal(evidence.elements[0].parentElementId,null);assert.ok(!evidence.elements.some(e=>['html','head','style','script','link','meta','template'].includes(e.tag)));
+ assert.deepEqual(evidence.elements.map(e=>e.elementId),layout.elements.map(e=>e.elementId));assert.deepEqual(evidence.elements.map(e=>e.elementId),computed.elements.map(e=>e.elementId));assert.equal(layout.documentElement.tag,'html');assert.match(html,/<head>/);assert.match(html,/<style/);
  const components=JSON.stringify(await read('components.json'));for(const secret of ['HYDRATION_SECRET','CSRF_SECRET','API_SECRET'])assert.ok(!components.includes(secret));
  assert.ok(resourceCookies.length>0);assert.ok(resourceCookies.every(value=>value===undefined),'resource completion does not inherit source cookies');
  browser=await chromium.launch();const page=await browser.newPage({viewport:report.viewport});await page.route(/^https?:/,route=>route.abort());await page.goto(pathToFileURL(path.join(out,'index.html')).href);await page.waitForTimeout(100);

@@ -584,7 +584,7 @@ async function captureInto(opts) {
     const limitations=['Original CSS and limited computed properties do not establish every winning cascade declaration.','Closed Shadow DOM is inaccessible. Iframe content is not captured; preview frames are blank. Readable canvas pixels are frozen as PNG backgrounds; tainted or unavailable canvases cannot be reconstructed. Animations and discarded WebGL buffers are not reconstructed.','Only the rendered initial page is observed. Lazy content outside this state is not explored. Readable video frames and element animation properties are frozen; video playback and original animation logic are not replayed.'];
     const write=(file,value)=>writeJsonFile(path.join(opts.out,file),{schemaVersion:3,...value});
     await write('components.json',{elements:dom.elements});
-    await write('layout.json',{viewport:dom.viewport,pageSize:dom.pageSize,scroll:dom.scroll,elements:dom.layout});
+    await write('layout.json',{viewport:dom.viewport,pageSize:dom.pageSize,scroll:dom.scroll,documentElement:dom.documentElement,elements:dom.layout});
     await write('styles/computed.json',{elements:dom.computed});
     await write('styles/stylesheets.json',{...css,network});
     await write('assets.json',{resources:[...recorded.values()],missing,icons:iconReport});

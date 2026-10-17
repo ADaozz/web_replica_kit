@@ -95,7 +95,7 @@ output/products/
 
 先读取报告，再按需要读取结构、布局和 CSS。所有 JSON 使用 Schema 3；字段说明见 [输出格式](references/output-format.md)。导航发现只生成 `navigation.json`，无需先运行 capture。
 
-`components.json` 提供语义标签候选和真实 DOM 父子关系，不代表 React/Vue 组件树。精确混合文本顺序以净化后的 `index.html` 为准。原始网络 CSS 与本地 URL 改写 CSS 分开保存；CSSOM 规则单独标注来源、作用域和顺序，动态规则不会冒充网络源码。关键计算样式用于解释布局，不能证明每个元素的完整级联来源。
+`components.json` 从 body 开始，只记录 UI 结构，包含已挂载的隐藏组件与 Open Shadow DOM，不保存 head、style、script、template 等非 UI 节点。组件、布局与计算样式的 elementId 集合一致；html 的布局和关键样式位于 layout.documentElement，body 样式仍与组件关联。节点预算和总数只计算符合条件的 UI 元素。它提供语义标签候选和真实 DOM 父子关系，不代表 React/Vue 组件树。精确混合文本顺序以净化后的 `index.html` 为准。原始网络 CSS 与本地 URL 改写 CSS 分开保存；CSSOM 规则单独标注来源、作用域和顺序，动态规则不会冒充网络源码。关键计算样式用于解释布局，不能证明每个元素的完整级联来源。
 
 预览可用 `file://` 打开，也可运行：
 
