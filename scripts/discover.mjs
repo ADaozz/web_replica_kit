@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {waitForConfirmation,withManualConfirmation} from './manual-confirmation.mjs';
 import {reserveOutput} from './output-directory.mjs';
 import {chromium} from 'playwright';
 import path from 'node:path';
@@ -47,22 +48,24 @@ export async function discover(opts) {
   const release=await reserveOutput(opts.out);
   let browser;
   try {
-  browser=await chromium.launch({headless:!opts.headed,executablePath:opts.executablePath});
+  browser=await chromium.launch({headless:!opts.headed,handleSIGINT:!opts.manual,executablePath:opts.executablePath});
     const page=await browser.newPage({viewport:{width:opts.width,height:opts.height},serviceWorkers:'block'});
-    const response=await page.goto(opts.url,{waitUntil:'domcontentloaded',timeout:45000});
-    if(response?.status()>=400)throw new Error(`HTTP ${response.status()}`);
+    const response=await page.goto(opts.url,{waitUntil:opts.manual?'commit':'domcontentloaded',timeout:45000});
+    if(response?.status()>=400&&!opts.manual)throw new Error(`HTTP ${response.status()}`);
+    const confirmation=await waitForConfirmation(page,opts);
+    if(opts.manual)await page.waitForLoadState('domcontentloaded',{timeout:opts.readyTimeout});
     if(opts.readySelector)await page.locator(opts.readySelector).filter({visible:true}).first().waitFor({timeout:opts.readyTimeout});
     await page.waitForTimeout(opts.wait);
     const links=await page.evaluate(scanNavigation);
     // Resolve against each entry's actual base URI, including <base href>.
     const resolved=groupNavigation(links.map(link=>({...link,href:classify(link.href,link.baseUrl).url})),page.url());
     for(const entry of resolved)for(const source of entry.sources){const raw=links.find(l=>l.selector===source.selector)?.href;source.href=raw && !/^(?:javascript|data|vbscript):/i.test(raw)?raw:source.href;}
-    const data={schemaVersion:3,sourceUrl:opts.url,finalUrl:page.url(),entries:resolved,limitations:['Only explicit URLs in the rendered DOM and open Shadow DOM are included. JS-only routes, closed Shadow DOM and iframe navigation are not inferred. Executable or encoded unsupported URL bodies are omitted. No discovered destination was visited.']};
+    const data={schemaVersion:3,confirmation,sourceUrl:opts.url,finalUrl:page.url(),entries:resolved,limitations:['Only explicit URLs in the rendered DOM and open Shadow DOM are included. JS-only routes, closed Shadow DOM and iframe navigation are not inferred. Executable or encoded unsupported URL bodies are omitted. No discovered destination was visited.']};
     await writeJsonFile(path.join(opts.out,'navigation.json'),data);
     return {status:'ok',url:page.url(),output:opts.out,files:{navigation:'navigation.json'},warnings:[]};
   }finally{await browser?.close();await release();}
 }
 if(process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href) {
-  try{console.log(JSON.stringify(await discover(parseArgs(process.argv.slice(2)))));}
+  try{console.log(JSON.stringify(await discover(withManualConfirmation(parseArgs(process.argv.slice(2))))));}
   catch(error){console.error(error.message);console.log(JSON.stringify({status:'failed',error:error.message}));process.exitCode=1;}
 }

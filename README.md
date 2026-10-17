@@ -35,7 +35,18 @@ node scripts/capture.mjs --url https://example.com/products \
 
 明确指定目标单页时可跳过发现。不要自动访问发现结果，也不要在没有指令时采集第二页。链接按绝对 URL 去重，保留原始 href、区域、名称、定位、可见性和多个来源。Query 参数和 Hash 保留；当前页面锚点与普通页面分开分类。`visible` 表示元素已渲染且有非零尺寸，包含视口以外的入口。
 
-两个命令均接受以下参数，不存在终端菜单：
+需要手动处理登录、验证、广告遮挡或等候页面加载时，可运行：
+
+```bash
+node scripts/capture.mjs --url https://example.com/products \
+  --out ./output/manual --manual --ready-selector main
+```
+
+`--manual` 会打开可见浏览器，加载期间会缓存静态资源，但不会生成 DOM、布局或截图。用户准备好目标页面后，在运行命令的终端按 Enter，随后执行 ready-selector 检查、额外等待、广告/加载清理和单次采集。`--headed` 仅显示浏览器，仍自动采集；`--manual` 才会等待确认。discover 也支持 manual，用于用户先完成验证再发现导航。
+
+确认提示仅写入 stderr，最终 stdout 仍是一行 JSON。必须在可交互终端和有桌面显示的环境中运行；非 TTY 输入明确失败，不会静默跳过确认。终端 EOF、取消或关闭浏览器会中止，不生成未经确认的快照。会话为临时浏览器上下文，不导出 Cookie 或私人 profile。没有页面控件点击自动化，也不会自动绕过验证。
+
+两个命令接受以下参数，没有终端菜单；manual 只有一次明确的就绪确认：
 
 | 参数 | 默认值 / 含义 |
 | --- | --- |
@@ -46,10 +57,22 @@ node scripts/capture.mjs --url https://example.com/products \
 | `--ready-selector` | 可选，等待至少一个匹配元素可见；不执行动作 |
 | `--ready-timeout` | 30000ms |
 | `--max-nodes` | 5000，最大 20000；仅 capture 使用，截断明确报告 |
-| `--headless`, `--headed` | 默认无界面；二者互斥 |
+| `--headless`, `--headed` | 默认无界面；二者互斥。headed 只显示浏览器，不等待确认 |
+| `--manual` | 有头模式，用户在终端按 Enter 确认后再采集或发现；与 headless 互斥 |
+| `--remove-selector` | capture 专用，额外删除匹配的 CSS 选择器；逗号可组合多个选择器，支持 Open Shadow DOM |
+| `--keep-noise` | capture 专用，关闭默认广告/加载清理；显式 remove-selector 仍生效 |
 | `--executable` | 可选 Chromium 可执行文件路径 |
 
-初始页面自己的重定向和渲染请求正常执行；不会点击或 Hover 控件，不会滚动加载其他 UI，不会遍历发现的网页链接。默认目标状态就是等待完成后实际渲染的页面。
+初始页面自己的重定向和渲染请求正常执行；不会点击或 Hover 控件，不会滚动加载其他 UI，不会遍历发现的网页链接。默认目标状态就是等待完成后实际渲染的页面，并在取证前清理明确的广告、推广弹窗和纯加载占位层。清理不点击关闭按钮，不继续等待或探索其他状态；DOM、布局、截图与 HTML 均对应清理后的同一页面。删除记录写入 `report.cleanup`。普通按钮内的加载图标、真实进度条和含正文的加载容器会保留。
+
+站点特有的浮层可显式指定，例如：
+
+```bash
+node scripts/capture.mjs --url https://example.com --out ./output/clean \
+  --remove-selector '#campaign-popup, .sponsor-panel, #startup-loader'
+```
+
+规则采用保守识别，未标记的广告可能保留。移除加载层不会生成尚未加载的正文；应先用 `--ready-selector` 等待真正的主内容出现。若要采集原始广告或加载状态，使用 `--keep-noise`。初始加载期间已下载的广告资源可能仍保留，清理不是网络广告拦截器。
 
 stdout 只输出一行 JSON；错误诊断写入 stderr。退出码稳定：`0` 为 `ok`，`2` 为 `partial`（证据可用但有预算截断或缺失），`1` 为 `failed`。调用方应解析 JSON，并读取 `report.json`；不能把退出码 2 当作完全失败或完全成功。失败可能留下未完成文件，重新运行必须换空目录。
 

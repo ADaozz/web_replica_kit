@@ -1,3 +1,5 @@
+import {waitForConfirmation} from './scripts/manual-confirmation.mjs';
+import {cleanPage} from './page-cleanup.mjs';
 import {staticSheetText} from './css-static-text.mjs';
 import {auditSnapshot} from './scripts/audit-snapshot.mjs';
 import {reserveOutput} from './scripts/output-directory.mjs';
@@ -278,7 +280,7 @@ async function captureInto(opts) {
     try { return await job; } finally { saving.delete(url); }
   }
 
-  const launchOptions = { headless: !opts.headed };
+  const launchOptions = { headless: !opts.headed, handleSIGINT: !opts.manual };
   if (opts.executablePath) launchOptions.executablePath = opts.executablePath;
   let browser = null;
   let context = null;
@@ -324,12 +326,16 @@ async function captureInto(opts) {
     });
 
 
-    const response=await page.goto(opts.url,{waitUntil:'domcontentloaded',timeout:45000});
-    if(response?.status()>=400)throw new Error(`HTTP ${response.status()}`);
+    const response=await page.goto(opts.url,{waitUntil:opts.manual?'commit':'domcontentloaded',timeout:45000});
+    if(response?.status()>=400&&!opts.manual)throw new Error(`HTTP ${response.status()}`);
+    const confirmation=await waitForConfirmation(page,opts);
+    if(opts.manual)await page.waitForLoadState('domcontentloaded',{timeout:opts.readyTimeout});
     if(opts.readySelector)await page.locator(opts.readySelector).filter({visible:true}).first().waitFor({timeout:opts.readyTimeout});
     await page.waitForTimeout(opts.wait);
     timings.load=performance.now()-started;
     let phase=performance.now();
+    const cleanup=await cleanPage(page,opts);
+    timings.cleanup=performance.now()-phase;phase=performance.now();
     const dom=await captureDOM(page,{maxNodes:opts.maxNodes});
     timings.dom=performance.now()-phase;phase=performance.now();
     const css=await captureStylesheets(page);
@@ -441,7 +447,7 @@ async function captureInto(opts) {
     if(staticAudit.issueCount)warnings.push(`Static resource audit found ${staticAudit.issueCount} unresolved references; see report.staticAudit`);
     timings.output=performance.now()-phase;timings.total=performance.now()-started;
     const status=warnings.length?'partial':'ok';
-    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,staticAudit,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,limitations,warnings,timingsMs:timings,previewGenerated:true,nodeCpuTimeMs:Object.fromEntries(Object.entries(process.cpuUsage(cpuStarted)).map(([key,value])=>[key,value/1000])),resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
+    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,confirmation,cleanup,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,staticAudit,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,limitations,warnings,timingsMs:timings,previewGenerated:true,nodeCpuTimeMs:Object.fromEntries(Object.entries(process.cpuUsage(cpuStarted)).map(([key,value])=>[key,value/1000])),resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
     return {status,url:page.url(),output:opts.out,files:{html:'index.html',components:'components.json',layout:'layout.json',styles:'styles/stylesheets.json',report:'report.json'},warnings};
   }finally{await resourceClient?.dispose();await context?.close();await browser?.close();}
 }

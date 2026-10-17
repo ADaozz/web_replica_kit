@@ -4,16 +4,18 @@
 
 ## 自动化回归
 
-以下最终检查全部通过，共 48 项：
+初次重构为 48 项；广告/加载清理及手动确认追加后，最终检查全部通过，共 53 项：
 
-- `npm test`：39 项，URL、图标、资源、JSON Writer、DOM、CLI 与目录互斥。
-- `npm run test:e2e`：4 项，导航浏览器提取、独立两命令流程、退出码、离线逐像素对照及旧式文档模式。
+- `npm test`：43 项，URL、图标、资源、JSON Writer、DOM、CLI 与目录互斥。
+- `npm run test:e2e`：5 项，导航浏览器提取、独立两命令流程、退出码、离线逐像素对照及旧式文档模式。
 - `npm run test:css`：3 项，动态规则、条件、作用域、变量字体简写和 inline style。
 - `npm run test:scroll`：2 项，file/HTTP 预览、嵌套和 Shadow DOM 滚动、非敏感表单显示。
 
 安全回归确认：JS Bundle 哨兵不进入产物；注释、事件属性、Hydration、CSRF meta 和敏感输入被过滤；资源补采不继承页面 Cookie；SVG 脚本、事件和注释被移除；原站脚本不会在预览中执行。合法图像/字体 Data URL 保留，混合 Data URL srcset 的其他候选正常改写。
 
 ## 六站点验证
+
+下表为广告清理功能加入前的原始页面状态对照；当前默认采集会移除明确噪声，因此不能把历史像素差异率当作清理后页面的对照结果。
 
 每个固定目标先 discover，读取候选，再 capture 预先选定的同一 URL；不访问发现的子页面。预览使用 file:// 并阻断外部 HTTP 请求，截图采用 pixelmatch threshold=0.1。差异率衡量像素，不能证明全页、响应式或交互质量。
 
@@ -76,3 +78,10 @@ CPU 与 RSS 每 200ms 采样，可能漏掉短命进程和最后一段 CPU 时�
 ## 剩余能力边界
 
 CSSOM-only 的构造样式表或发生复杂修改的规则仍受浏览器序列化能力限制，原始网络 CSS 与 authored inline CSS 会单独保留；不保证每个节点的完整级联来源。Closed Shadow DOM、iframe 内容、Canvas 重绘、未渲染懒内容与组件交互均不属于当前静态采集能力。部分站点的预算截断、未本地化变体和残余视觉差异已如实记录。
+
+## 追加验证：清理与用户确认
+
+- 新增两项噪声清理测试，覆盖广告、加载层、推广弹窗、Open Shadow DOM、display:contents 的自定义弹窗宿主、滚动锁、正常表单/按钮/进度条保留、自定义选择器和关闭自动清理。
+- 在真实 Shoelace Dropdown 页面上再次采集，`report.cleanup` 明确记录删除 `sl-dialog#wa-dialog` 推广弹窗，截图不再被广告遮罩覆盖，主页面可见。仍有 5,185 元素超过 5,000 的结构预算，状态保持 partial；没有隐藏此限制。证据位于本机 `test-results/shoelace-cleaned-fixed/`。
+- 手动确认测试覆盖按 Enter 前不继续、提示仅走诊断流、非 TTY 失败、EOF/浏览器关闭中止、manual 强制 headed，以及真实 capture 链路在确认前不生成 DOM/截图、确认后执行清理并记录确认结果。
+- 当前 CI 没有桌面显示服务器，因此确认门控使用真实无头 Chromium 验证，终端输入用可控流验证；实际可见窗口仍需在用户桌面环境运行 `--manual` 验收。未将此项冒充有头 GUI 实测。

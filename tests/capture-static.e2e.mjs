@@ -19,17 +19,17 @@ test('independent discovery and capture produce safe schema 3, one page and exac
  if(req.url==='/bundle.js'){res.setHeader('Content-Type','application/javascript');res.end('window.SOURCE_BUNDLE_SENTINEL=true; document.querySelector("#css").sheet.insertRule("main{border:3px solid blue}");');return;}
  if(req.url==='/sheet.css'){res.setHeader('Content-Type','text/css');res.end('/* ORIGINAL_CSS */ @layer base; main{display:grid;grid-template-columns:100px 1fr;width:600px;height:180px;background:#eee}');return;}
  if(req.url==='/missing.png'){res.writeHead(404);res.end();return;}
- res.setHeader('Content-Type','text/html');res.setHeader('Set-Cookie','session=PRIVATE_COOKIE; Path=/');res.end(`<!doctype html><link rel="apple-touch-icon" href="/extra.svg"><meta name="csrf-token" content="CSRF_SECRET"><input name="api_key" style="display:none" value="API_SECRET"><link id="css" rel="stylesheet" href="/sheet.css"><main data-mode="visible"><nav><a href="/never">Never</a><a href="?q=1">Query</a><a href="#x">Anchor</a><a href="/never"><img alt="Picture" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></a></nav><section>Rendered</section></main><input type="hidden" value="HYDRATION_SECRET"><script type="application/json">HYDRATION_SECRET</script><!-- COMMENT_SECRET --><button onclick="alert('HANDLER_SECRET')">Button</button><script src="/bundle.js"></script>${req.url.includes('broken')?'<img src="/missing.png">':''}`);
+ res.setHeader('Content-Type','text/html');res.setHeader('Set-Cookie','session=PRIVATE_COOKIE; Path=/');res.end(`<!doctype html><link rel="apple-touch-icon" href="/extra.svg"><meta name="csrf-token" content="CSRF_SECRET"><input name="api_key" style="display:none" value="API_SECRET"><link id="css" rel="stylesheet" href="/sheet.css"><div class="ad-banner">AD_NOISE</div><div class="loading-overlay">Loading…</div><main data-mode="visible"><nav><a href="/never">Never</a><a href="?q=1">Query</a><a href="#x">Anchor</a><a href="/never"><img alt="Picture" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></a></nav><section>Rendered</section></main><input type="hidden" value="HYDRATION_SECRET"><script type="application/json">HYDRATION_SECRET</script><!-- COMMENT_SECRET --><button onclick="alert('HANDLER_SECRET')">Button</button><script src="/bundle.js"></script>${req.url.includes('broken')?'<img src="/missing.png">':''}`);
  });await new Promise(r=>server.listen(0,'127.0.0.1',r));const url=`http://127.0.0.1:${server.address().port}/`;
  let browser;try{
  const navOut=path.join(directory,'nav');await discover(parseArgs(['--url',url,'--out',navOut,'--wait','0']));
  const nav=JSON.parse(await fs.readFile(path.join(navOut,'navigation.json')));assert.equal(nav.entries.find(e=>e.url.endsWith('/never')).sources.length,2);assert.ok(!visited.includes('/never'));
  const out=path.join(directory,'capture');const result=await command(['--url',url,'--out',out,'--wait','0']);assert.equal(result.code,0,JSON.stringify(result.result));assert.equal(result.result.status,'ok');
  const read=async f=>JSON.parse(await fs.readFile(path.join(out,f)));
- const report=await read('report.json');assert.equal(report.schemaVersion,3);assert.equal(report.previewGenerated,true);
+ const report=await read('report.json');assert.equal(report.schemaVersion,3);assert.equal(report.previewGenerated,true);assert.equal(report.cleanup.removedCount,2);
  const assets=await read('assets.json');assert.ok(!assets.resources.some(r=>r.type==='script'));assert.ok(!visited.includes('/never'));
  const css=await read('styles/stylesheets.json');assert.equal(css.network.length,1);assert.match(await fs.readFile(path.join(out,css.network[0].originalPath),'utf8'),/ORIGINAL_CSS/);
- const html=await fs.readFile(path.join(out,'index.html'),'utf8');for(const secret of ['SOURCE_BUNDLE_SENTINEL','HYDRATION_SECRET','COMMENT_SECRET','HANDLER_SECRET','CSRF_SECRET','API_SECRET','PRIVATE_COOKIE'])assert.ok(!html.includes(secret),secret);
+ const html=await fs.readFile(path.join(out,'index.html'),'utf8');for(const secret of ['SOURCE_BUNDLE_SENTINEL','HYDRATION_SECRET','COMMENT_SECRET','HANDLER_SECRET','CSRF_SECRET','API_SECRET','PRIVATE_COOKIE','AD_NOISE'])assert.ok(!html.includes(secret),secret);
  const components=JSON.stringify(await read('components.json'));for(const secret of ['HYDRATION_SECRET','CSRF_SECRET','API_SECRET'])assert.ok(!components.includes(secret));
  assert.ok(resourceCookies.length>0);assert.ok(resourceCookies.every(value=>value===undefined),'resource completion does not inherit source cookies');
  browser=await chromium.launch();const page=await browser.newPage({viewport:report.viewport});await page.route(/^https?:/,route=>route.abort());await page.goto(pathToFileURL(path.join(out,'index.html')).href);await page.waitForTimeout(100);
@@ -47,4 +47,18 @@ test('legacy document mode and HTML background resources survive capture',async(
  assert.ok(!html.includes('<!DOCTYPE'));assert.match(html,/background="assets\/stars.gif"/);
  const preview=await browser.newPage();await preview.setContent(html);assert.equal(await preview.evaluate(()=>document.compatMode),'BackCompat');
  }finally{await browser.close();}
+});
+test('manual gate produces no snapshot before confirmation and captures the confirmed page after cleanup',async()=>{
+ const {capture}=await import('../capture.mjs');
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'replica-confirm-'));
+ const server=http.createServer((_req,res)=>{res.setHeader('Content-Type','text/html');res.end('<main>Before confirmation</main><div class="ad-banner">Remove me</div>');});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ let unblock,entered;const gate=new Promise(r=>unblock=r),ready=new Promise(r=>entered=r);
+ const opts=parseArgs(['--url',`http://127.0.0.1:${server.address().port}/`,'--out',directory,'--wait','0']);
+ // Test the actual capture gate in headless CI; CLI --manual separately forces headed.
+ const running=capture({...opts,manual:true,confirmReady:async page=>{entered();await gate;await page.locator('main').evaluate(el=>el.textContent='Confirmed content');}});
+ try{
+ await ready;assert.ok(!(await fs.readdir(directory)).includes('index.html'));assert.ok(!(await fs.readdir(directory)).includes('screenshot.png'));
+ unblock();const result=await running;assert.equal(result.status,'ok');const report=JSON.parse(await fs.readFile(path.join(directory,'report.json')));
+ assert.equal(report.confirmation.confirmed,true);assert.equal(report.cleanup.removedCount,1);const html=await fs.readFile(path.join(directory,'index.html'),'utf8');assert.ok(html.includes('Confirmed content'));assert.ok(!html.includes('Remove me'));
+ }finally{unblock();await running.catch(()=>{});await new Promise(r=>server.close(r));await fs.rm(directory,{recursive:true,force:true});}
 });

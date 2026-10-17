@@ -4,7 +4,7 @@ Every JSON document includes `schemaVersion: 3`. Paths are relative to the outpu
 
 | File | Contents |
 | --- | --- |
-| navigation.json (discover only) | sourceUrl, finalUrl, entries, limitations. Each entry has id, label, absolute url, kind and all sources. Sources retain raw href (executable/encoded unsupported URL bodies are omitted), label, region, selector, visibility, baseUrl, sameOrigin and anchor. `>>>` denotes an open Shadow DOM boundary in a diagnostic selector. This is not a Playwright locator guarantee. |
+| navigation.json (discover only) | sourceUrl, finalUrl, confirmation, entries, limitations. Each entry has id, label, absolute url, kind and all sources. Sources retain raw href (executable/encoded unsupported URL bodies are omitted), label, region, selector, visibility, baseUrl, sameOrigin and anchor. `>>>` denotes an open Shadow DOM boundary in a diagnostic selector. This is not a Playwright locator guarantee. |
 | components.json | elements: elementId, parentElementId, tag, componentType, attributes, direct text, scope and frameId. Parent links preserve traversal order. Custom elements and semantic tags are candidates, never framework components. Script, hidden input and hydration content are omitted. Direct text is convenient for inspection; use sanitized index.html when exact mixed text/element ordering is needed. |
 | layout.json | viewport, pageSize, document scroll, elements keyed by elementId: viewport rect, scroll and visible. Does not duplicate text or attributes. |
 | styles/computed.json | elements keyed by elementId and limited layout/visual properties. No complete cascade evidence. |
@@ -12,8 +12,8 @@ Every JSON document includes `schemaVersion: 3`. Paths are relative to the outpu
 | styles/original/ | Unmodified network CSS bytes, separated by stylesheet. |
 | assets.json | resources with URL, aliases, localPath, type, contentType, bytes, SVG sanitized flag; missing failures; icon completion evidence. Data image/font URLs remain embedded. |
 | index.html | Sanitized static rendered preview with declarative open Shadow DOM, CSSOM dynamic rules where readable, retaining authored text for unchanged rules to avoid CSSOM shorthand serialization loss and localized resources. Only project scroll/custom-element initialization may execute. |
-| screenshot.png | Captured viewport, without automatic page scrolling. |
-| report.json | status, inputUrl, finalUrl, viewport, DOM totals and truncation, stylesheetCount, missingResources, shadowRoots/iframes/canvases, limitations, warnings, timingsMs, previewGenerated, resourceBytes Node CPU time and Node RSS sample. staticAudit lists unresolved HTML/CSS resource references, including unused CSS variants. |
+| screenshot.png | Captured viewport after reported noise cleanup, without automatic page scrolling. |
+| report.json | status, inputUrl, finalUrl, viewport, confirmation (mode, confirmed and the manually confirmed URL), cleanup (automatic policy, explicit selector, removedCount, removed selectors/tags/reasons and limitations), DOM totals and truncation, stylesheetCount, missingResources, shadowRoots/iframes/canvases, limitations, warnings, timingsMs, previewGenerated, resourceBytes Node CPU time and Node RSS sample. staticAudit lists unresolved HTML/CSS resource references, including unused CSS variants. |
 
 Read report first; then component/layout evidence and relevant stylesheets/assets. Rectangles use viewport coordinates; document coordinates add document scroll. All budget or resource failures produce `partial`. CSSOM inaccessible stylesheets can still have raw network CSS. Iframe contents, closed Shadow DOM and canvas pixel reconstruction are unsupported and explicitly reported.
 

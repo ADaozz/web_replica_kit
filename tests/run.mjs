@@ -6,3 +6,6 @@ import './json-writer.test.mjs';
 import './discover.test.mjs';
 import './dom-static.test.mjs';
 import './cli.test.mjs';
+
+import './page-cleanup.test.mjs';
+import './manual-confirmation.test.mjs';
