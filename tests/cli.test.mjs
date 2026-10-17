@@ -12,3 +12,9 @@ test('CLI rejects invalid arguments with stable machine-readable failure',()=>{
 test('core module import has no CLI side effects',()=>{
  assert.equal(execFileSync(process.execPath,['--input-type=module','-e',"await import('./capture.mjs')"],{encoding:'utf8'}),'');
 });
+
+test('empty output reservation excludes concurrent commands and releases on errors',async()=>{
+ const fs=await import('node:fs/promises'),os=await import('node:os'),path=await import('node:path');
+ const {reserveOutput}=await import('../scripts/output-directory.mjs');const directory=await fs.mkdtemp(path.join(os.tmpdir(),'replica-lock-'));
+ try{const release=await reserveOutput(directory);await assert.rejects(reserveOutput(directory),/reserved/);await release();await fs.writeFile(path.join(directory,'existing'),'keep');await assert.rejects(reserveOutput(directory),/empty/);assert.equal(await fs.readFile(path.join(directory,'existing'),'utf8'),'keep');assert.ok(!(await fs.readdir(directory)).includes('.web-replica.lock'));}finally{await fs.rm(directory,{recursive:true,force:true});}
+});

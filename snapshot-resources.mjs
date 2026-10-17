@@ -12,7 +12,7 @@ export function finalizeSnapshotResources(html) {
       if (rel.includes('modulepreload') ||
           (rel.some(value => ['preload', 'prefetch'].includes(value)) && attrs.get('as')?.toLowerCase() === 'script')) return '';
     }
-    if (['src', 'href', 'poster', 'data', 'xlink:href', 'srcset', 'imagesrcset'].some(name =>
+    if (['src', 'href', 'poster', 'background', 'data', 'xlink:href', 'srcset', 'imagesrcset'].some(name =>
       /^(?:\.\/)?assets\//i.test(attrs.get(name) || ''))) {
       return tag.replace(/\s([^\s=/>]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/g,
         (attribute, name) => /^(?:crossorigin|integrity)$/i.test(name) ? '' : attribute);
@@ -39,15 +39,32 @@ export function rewriteSnapshotAssets(html, mappings, sourceURL) {
   const rewritten = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>|<(?:[^>"']|"[^"]*"|'[^']*')*>/gi, tag => {
     if (/^<style\b/i.test(tag)) return tag.replace(/(^<style\b[^>]*>)([\s\S]*)(<\/style>$)/i,
       (_all, open, css, close) => open + rewriteCSS(css) + close);
-    return tag.replace(/\b(src|href|poster|data|xlink:href|style|srcset|imagesrcset)\s*=\s*(["'])([\s\S]*?)\2/gi,
+    return tag.replace(/\b(src|href|poster|background|data|xlink:href|style|srcset|imagesrcset)\s*=\s*(["'])([\s\S]*?)\2/gi,
       (_all, name, quote, raw) => {
         const value = decode(raw);
         const rewritten = name.toLowerCase() === 'style' ? rewriteCSS(value) :
-          /srcset$/i.test(name) && !value.includes('data:') ? value.split(',').map(item => {
-            const parts = item.trim().match(/^(\S+)(\s+.*)?$/); return parts ? map(parts[1]) + (parts[2] || '') : item;
-          }).join(', ') : map(value);
+          /srcset$/i.test(name) ? rewriteSrcsetUrls(value,map) : map(value);
         return `${name}=${quote}${encode(rewritten, quote)}${quote}`;
       });
   });
   return finalizeSnapshotResources(rewritten);
+}
+
+// URL tokens may contain commas (notably data URLs); descriptors end a candidate.
+export function rewriteSrcsetUrls(input,map) {
+  const candidates=[];let i=0;
+  while(i<input.length) {
+    while(/[\s,]/.test(input[i] || '')&&i<input.length)i++;
+    if(i>=input.length)break;
+    const start=i;while(i<input.length&&!/\s/.test(input[i]))i++;
+    let url=input.slice(start,i),descriptor='';
+    if(url.endsWith(',')){url=url.replace(/,+$/,'');}
+    else {
+      let parens=0;const d=i;
+      while(i<input.length){const c=input[i];if(c==='(')parens++;if(c===')')parens--;if(c===','&&!parens)break;i++;}
+      descriptor=input.slice(d,i).trim();if(input[i]===',')i++;
+    }
+    if(url)candidates.push(map(url)+(descriptor?' '+descriptor:''));
+  }
+  return candidates.join(', ');
 }

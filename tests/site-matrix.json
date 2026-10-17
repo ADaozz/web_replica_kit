@@ -1,10 +1,26 @@
 [
-  { "id": "tabler-dashboard", "url": "https://preview.tabler.io/", "ready": ".page-body", "coverage": "复杂后台、卡片、表格、SVG 图标、图表和图片", "license": "https://github.com/tabler/tabler/blob/dev/LICENSE" },
-  { "id": "bootstrap-dashboard", "url": "https://getbootstrap.com/docs/5.3/examples/dashboard/", "ready": "main", "coverage": "后台布局、SVG 图标、Canvas 图表边界", "license": "https://getbootstrap.com/docs/5.3/about/license/" },
-  { "id": "bootstrap-sidebars", "url": "https://getbootstrap.com/docs/5.3/examples/sidebars/", "ready": "main", "coverage": "多种侧栏、内联 SVG sprite、头像、下拉菜单初始状态", "license": "https://getbootstrap.com/docs/5.3/about/license/" },
-  { "id": "bootstrap-checkout", "url": "https://getbootstrap.com/docs/5.3/examples/checkout/", "ready": "main", "coverage": "复杂表单、栅格、徽标图片、移动端重排", "license": "https://getbootstrap.com/docs/5.3/about/license/" },
-  { "id": "bootstrap-icons", "url": "https://icons.getbootstrap.com/", "ready": "main", "coverage": "大量 SVG 图标、长页面、节点和懒加载限制", "license": "https://github.com/twbs/icons/blob/main/LICENSE" },
-  { "id": "fontawesome-examples", "url": "https://fontawesome.com/v4/examples/", "ready": ".fa", "coverage": "图标字体、伪元素、旋转、堆叠和动画图标", "license": "https://fontawesome.com/v4/license/" },
-  { "id": "shoelace-icons", "url": "https://shoelace.style/components/icon", "ready": "sl-icon svg", "coverage": "Web Components、Shadow DOM、多图标库和动态注入 SVG", "license": "https://github.com/shoelace-style/shoelace/blob/next/LICENSE.md" },
-  { "id": "shoelace-dropdown", "url": "https://shoelace.style/components/dropdown", "ready": "sl-dropdown", "coverage": "嵌套 Shadow DOM、菜单、按钮及组件样式", "license": "https://github.com/shoelace-style/shoelace/blob/next/LICENSE.md" }
+  {
+    "id": "tabler-dashboard",
+    "url": "https://preview.tabler.io/"
+  },
+  {
+    "id": "bootstrap-sidebars",
+    "url": "https://getbootstrap.com/docs/5.3/examples/sidebars/"
+  },
+  {
+    "id": "shoelace-dropdown",
+    "url": "https://shoelace.style/components/dropdown"
+  },
+  {
+    "id": "ant-design-switch",
+    "url": "https://ant.design/components/switch/"
+  },
+  {
+    "id": "css-zen-garden",
+    "url": "https://www.csszengarden.com/"
+  },
+  {
+    "id": "space-jam-1996",
+    "url": "https://www.spacejam.com/1996/"
+  }
 ]

@@ -7,10 +7,10 @@ export async function captureStylesheets(page) {
       // The same constructable sheet may be adopted by multiple shadow roots.
       const key=scope+':'+(seen.get(sheet) || seen.size+1);if(!seen.has(sheet))seen.set(sheet,seen.size+1);
       if(stylesheets.some(s=>s.key===key))return;
-      const item={key,id:`sheet-${stylesheets.length+1}`,order:stylesheets.length,scope,adopted,url:sheet.href || null,baseUrl:owner?.baseURI || document.baseURI,disabled:sheet.disabled,media:sheet.media?.mediaText || '',source:'cssom',sourceRange:null,missingReason:null,sourcePositionMissingReason:'Original source position unavailable',rules:[]};
+      const item={key,id:`sheet-${stylesheets.length+1}`,order:stylesheets.length,scope,adopted,url:sheet.href || null,baseUrl:owner?.baseURI || document.baseURI,disabled:sheet.disabled,media:sheet.media?.mediaText || '',source:'cssom',sourceRange:null,missingReason:'Original source position unavailable',readError:null,rules:[]};
       stylesheets.push(item);
       try{item.rules=[...sheet.cssRules].map(r=>r.cssText);}
-      catch(error){item.missingReason='CSSOM rules inaccessible: '+error.name;}
+      catch(error){item.readError='CSSOM rules inaccessible: '+error.name;}
       if(owner?.localName==='style')item.inlineText=owner.textContent;
       try{for(const rule of sheet.cssRules)if(rule.styleSheet)readImport(rule.styleSheet,scope,item.id);}catch{}
     }

@@ -84,8 +84,10 @@ export async function auditSnapshot(directory) {
     if (text !== null) cssTexts.push({ text, base: base.href });
   }
   for (const { text, base } of cssTexts) {
-    for (const match of text.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)) {
-      const raw = match[2].trim();
+    const references=[...text.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)].map(m=>m[2]);
+    references.push(...[...text.matchAll(/@import\s+(['"])([^'"\n]+)\1/gi)].map(m=>m[2]));
+    for (const reference of references) {
+      const raw = reference.trim();
       if (!raw || /^(?:#|data:|blob:)/i.test(raw)) continue;
       stats.cssReferences++;
       let url;

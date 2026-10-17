@@ -1,14 +1,16 @@
+import {staticSheetText} from './css-static-text.mjs';
+import {auditSnapshot} from './scripts/audit-snapshot.mjs';
 import {reserveOutput} from './scripts/output-directory.mjs';
 import {writeJsonFile} from './json-writer.mjs';
 import {captureDOM} from './dom-snapshot.mjs';
 import {captureStylesheets} from './css-rule-capture.mjs';
-import {chromium} from 'playwright';
+import {chromium,request as apiRequest} from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {discoverIcons,completeIcons,inlineSpriteSymbols} from './icon-capture.mjs';
 import {injectSnapshotScrollRuntime} from './snapshot-scroll.mjs';
-import {finalizeSnapshotResources,rewriteSnapshotAssets} from './snapshot-resources.mjs';
+import {finalizeSnapshotResources,rewriteSnapshotAssets,rewriteSrcsetUrls} from './snapshot-resources.mjs';
 const MB=1024*1024, MAX_PER_FILE=12*MB, MAX_TOTAL=120*MB;
 const mimeExt = new Map([
   ['text/css', '.css'],
@@ -75,9 +77,9 @@ async function waitForPending(pending) {
   }
 }
 
-export async function makeSnapshotHtml(page, assetMap) {
+export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}) {
   // Preserve the rendered DOM and native CSS; only scroll initialization is authorized.
-  const snapshot = await page.evaluateHandle(({ mappings }) => {
+  const render = ({ mappings,stylesheetSources }) => {
     const localMap = mappings;
     const base = document.baseURI;
     function mapURL(raw) {
@@ -97,13 +99,7 @@ export async function makeSnapshotHtml(page, assetMap) {
         .replace(/(@import\s+)(['"])([^'"\n]+)\2/gi, (_all, prefix, quote, value) =>
           `${prefix}${quote}${mapURL(value)}${quote}`);
     }
-    function rewriteSrcset(srcset) {
-      if(srcset.includes('data:'))return srcset;
-      return srcset.split(',').map(item => {
-        const match = item.trim().match(/^(\S+)(\s+.*)?$/);
-        return match ? mapURL(match[1]) + (match[2] || '') : item;
-      }).join(', ');
-    }
+    function rewriteSrcset(srcset) {return rewriteSrcsetUrls(srcset,mapURL);}
     function appendAdoptedStyles(source, target) {
       for (const sheet of source.adoptedStyleSheets || []) {
         try {
@@ -121,7 +117,7 @@ export async function makeSnapshotHtml(page, assetMap) {
         try {
           const style=document.createElement('style');
           const base=source.sheet.href || source.baseURI;
-          style.textContent=[...source.sheet.cssRules].map(r=>r.cssText).join('\n').replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi,(_all,_q,raw)=>{
+          style.textContent=staticSheetText(source.sheet,stylesheetSources[source.sheet.href]).replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi,(_all,_q,raw)=>{
             if(/^(?:data:|#)/i.test(raw))return `url("${raw}")`;
             return `url("${new URL(raw,base).href}")`;
           }).replace(/(@import\s+)(['"])([^'"\n]+)\2/gi,(_all,p,q,raw)=>p+q+new URL(raw,base).href+q);
@@ -130,10 +126,11 @@ export async function makeSnapshotHtml(page, assetMap) {
           return style;
         }catch{}
       }
+      if(source.localName==='meta' && /token|secret|csrf|authorization|api[_-]?key/i.test(source.getAttribute('name') || ''))return document.createTextNode('');
       const target = source.cloneNode(false);
       if (source.nodeType !== Node.ELEMENT_NODE) return target;
       if(source.localName==='input') {
-        const sensitive=source.matches('input[type=password],input[type=file],input[type=hidden]') || /token|secret|password/i.test(`${source.id} ${source.name}`);
+        const sensitive=source.matches('input[type=password],input[type=file],input[type=hidden]') || /token|secret|password|csrf|api[_-]?key|session|credential|authorization/i.test(`${source.id} ${source.name}`);
         if(sensitive)target.removeAttribute('value');else target.setAttribute('value',source.value);
         target.toggleAttribute('checked',source.checked);
       }
@@ -145,10 +142,11 @@ export async function makeSnapshotHtml(page, assetMap) {
           source.scrollWidth > source.clientWidth || source.scrollHeight > source.clientHeight) {
         scrollStates.push({ target, left: source.scrollLeft, top: source.scrollTop });
       }
-      if(source.localName==='textarea'){target.textContent=/token|secret|password/i.test(`${source.id} ${source.name}`)?'':source.value;return target;}
+      if(source.localName==='textarea'){target.textContent=/token|secret|password|csrf|api[_-]?key|session|credential|authorization/i.test(`${source.id} ${source.name}`)?'':source.value;return target;}
       // 动态 insertRule() 添加的规则不在文本内容中，需要读取样式表。
       if (source.localName === 'style' && source.sheet) {
-        try { target.textContent = [...source.sheet.cssRules].map(r => r.cssText).join('\n'); return target; } catch {}
+        if(source.sheet.disabled)target.setAttribute('media','not all');
+        try { target.textContent = staticSheetText(source.sheet,source.textContent); return target; } catch {}
       }
       if (source.localName === 'template') {
         for(const child of source.content.childNodes)target.content.append(cloneRendered(child));
@@ -187,12 +185,13 @@ export async function makeSnapshotHtml(page, assetMap) {
       for (const attribute of [...el.attributes]) {
         const name = attribute.name.toLowerCase();
         if (name.startsWith('on')) el.removeAttribute(attribute.name);
-        if (/token|secret|password|nonce|authorization|cookie/i.test(name) || /^data-(?:props|page|state-json|hydration|react-props|initial-state|server-data)$/.test(name)) el.removeAttribute(attribute.name);
+        if (name.startsWith('data-') && /^[\s]*[\[{]/.test(attribute.value))el.removeAttribute(attribute.name);
+        if (/token|secret|password|csrf|api[_-]?key|session|credential|authorization|nonce|cookie/i.test(name) || /^data-(?:props|page|state-json|hydration|react-props|initial-state|server-data)$/.test(name)) el.removeAttribute(attribute.name);
         if (/^(?:href|src|action|xlink:href)$/.test(name) && /^javascript:/i.test(attribute.value))el.removeAttribute(attribute.name);
         if (name === 'ping') el.removeAttribute(attribute.name);
         if (name.startsWith('data-wrk-')) el.removeAttribute(attribute.name);
       }
-      for (const attr of ['src', 'href', 'poster', 'data', 'xlink:href']) {
+      for (const attr of ['src', 'href', 'poster', 'data', 'background', 'xlink:href']) {
         if (el.hasAttribute(attr)) {
           const mapped = mapURL(el.getAttribute(attr));
           el.setAttribute(attr, mapped);
@@ -225,9 +224,14 @@ export async function makeSnapshotHtml(page, assetMap) {
       head.prepend(charset);
     }
     return clone;
-  }, { mappings: assetMap });
+  };
+  // Compose only our own helper functions; webpage data stays in structured arguments.
+  const renderInBrowser = new Function('args',`const rewriteSrcsetUrls = ${rewriteSrcsetUrls.toString()}; const staticSheetText = ${staticSheetText.toString()}; return (${render.toString()})(args);`);
+  const snapshot = await page.evaluateHandle(renderInBrowser,{mappings:assetMap,stylesheetSources});
   try {
-    const html = await snapshot.evaluate(root => '<!DOCTYPE html>\n' + root.outerHTML);
+    const valid=await snapshot.evaluate(root=>!!root && root.nodeType===1 && root.localName==='html');
+    if(!valid)throw new Error('Static preview did not produce an HTML document');
+    const html = await snapshot.evaluate(root => (document.doctype ? new XMLSerializer().serializeToString(document.doctype)+'\n' : '') + root.outerHTML);
     return { html: injectSnapshotScrollRuntime(finalizeSnapshotResources(html)) };
   } finally { await snapshot.dispose(); }
 }
@@ -237,7 +241,7 @@ export async function capture(opts) {
   try{return await captureInto(opts);}finally{await release();}
 }
 async function captureInto(opts) {
-  const started=performance.now(),timings={};
+  const started=performance.now(),cpuStarted=process.cpuUsage(),timings={};
   await fs.mkdir(path.join(opts.out, 'assets'), { recursive: true });
   const recorded = new Map();
   const redirectAliases = new Map();
@@ -278,6 +282,7 @@ async function captureInto(opts) {
   if (opts.executablePath) launchOptions.executablePath = opts.executablePath;
   let browser = null;
   let context = null;
+  let resourceClient = null;
 
   try {
     const contextOptions = {
@@ -287,6 +292,8 @@ async function captureInto(opts) {
     };
     browser = await chromium.launch(launchOptions);
     context = await browser.newContext(contextOptions);
+    const proxy=process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    resourceClient=await apiRequest.newContext(proxy?{proxy:{server:proxy,bypass:'localhost,127.0.0.1,[::1]'}}:{});
     const page = context.pages()[0] || await context.newPage();
     page.on('requestfailed',request=>{
       const type=request.resourceType();
@@ -311,7 +318,7 @@ async function captureInto(opts) {
         if(Number.isFinite(contentLength) && contentLength>MAX_PER_FILE){missingResource(response.url(),type,'resource-byte-budget',{bytes:contentLength,limit:MAX_PER_FILE});return;}
         const body = await response.body();
         await storeResource(response.url(), body, contentType, type);
-      })().catch(e=>{const reason=String(e.message || e);errors.push(`${type}: ${reason}`);missingResource(request.url(),type,reason);});
+      })().catch(e=>{const reason=String(e.message || e).split('\n')[0];errors.push(`${type}: ${reason}`);missingResource(request.url(),type,reason);});
       pending.add(job);
       void job.finally(() => pending.delete(job));
     });
@@ -327,7 +334,10 @@ async function captureInto(opts) {
     timings.dom=performance.now()-phase;phase=performance.now();
     const css=await captureStylesheets(page);
     timings.css=performance.now()-phase;phase=performance.now();
-    const settledSnapshot=await makeSnapshotHtml(page,currentMappings());
+    await waitForPending(pending);
+    const stylesheetSources={};
+    for(const r of recorded.values())if(r.localPath.endsWith('.css')){const text=await fs.readFile(path.join(opts.out,r.localPath),'utf8');for(const url of [r.url,...[...redirectAliases].filter(([,target])=>target===r.url).map(([alias])=>alias)])stylesheetSources[url]=text;}
+    const settledSnapshot=await makeSnapshotHtml(page,currentMappings(),stylesheetSources);
     await page.screenshot({path:path.join(opts.out,'screenshot.png'),animations:'allow'});
     const inventory=await page.evaluate(discoverIcons,{limit:30000});
     await waitForPending(pending);
@@ -352,8 +362,9 @@ async function captureInto(opts) {
           return { status: 200, url, contentType: result.contentType, body: Buffer.from(result.base64, 'base64') };
         }
         if (!isHttpUrl(url)) throw new Error('Unsupported icon resource protocol');
-        const response = await context.request.get(url, { timeout: 12000,
-          headers: { referer: page.url() } });
+        let response;
+        try{response=await resourceClient.get(url,{timeout:12000});}
+        catch(error){throw new Error(String(error.message).split('\n')[0]);}
         try {
           if (!shouldStore('',response.headers()['content-type'] || ''))throw new Error('Unsupported static resource content type');
           if (Number(response.headers()['content-length']) > MAX_PER_FILE) throw new Error('File exceeds size budget');
@@ -372,6 +383,27 @@ async function captureInto(opts) {
 
 
     timings.resources=performance.now()-phase;phase=performance.now();
+    // SVG is an image resource but may contain executable markup. Sanitize it
+    // before either local preview loading or sprite symbol inlining.
+    for(const resource of recorded.values())if(resource.localPath.endsWith('.svg')) {
+      const file=path.join(opts.out,resource.localPath),raw=await fs.readFile(file,'utf8');
+      let cleaned;
+      try{cleaned=await page.evaluate(text=>{
+        const doc=new DOMParser().parseFromString(text,'image/svg+xml');
+        if(doc.querySelector('parsererror'))throw new Error('Invalid SVG markup');
+        const walker=doc.createTreeWalker(doc,NodeFilter.SHOW_COMMENT),comments=[];
+        while(walker.nextNode())comments.push(walker.currentNode);for(const node of comments)node.remove();
+        for(const el of doc.querySelectorAll('*')) {
+          if(['script','iframe','object','embed','base'].includes(el.localName.toLowerCase())){el.remove();continue;}
+          for(const attr of [...el.attributes])if(/^on|token|secret|password|csrf|nonce|cookie/i.test(attr.name)||(/^(?:href|xlink:href)$/i.test(attr.name)&&/^\s*javascript:/i.test(attr.value)))el.removeAttribute(attr.name);
+        }
+        return new XMLSerializer().serializeToString(doc);
+      },raw);}catch(error){
+        recorded.delete(resource.url);totalBytes-=resource.bytes;await fs.unlink(file);
+        missingResource(resource.url,resource.type,'SVG sanitization failed: '+String(error.message).split('\n')[0]);continue;
+      }
+      await fs.writeFile(file,cleaned);totalBytes+=Buffer.byteLength(cleaned)-resource.bytes;resource.bytes=Buffer.byteLength(cleaned);resource.sanitized=true;
+    }
     for(const [alias,target] of redirectAliases){const r=recorded.get(target);if(r)(r.aliases ||= []).push(alias);}
     const mappings=currentMappings();
     const network=[];
@@ -393,11 +425,11 @@ async function captureInto(opts) {
     for(const r of recorded.values())if(r.localPath.endsWith('.svg'))sprites.push(await fs.readFile(path.join(opts.out,r.localPath),'utf8'));
     html=inlineSpriteSymbols(html,sprites);
     await fs.writeFile(path.join(opts.out,'index.html'),html);
-    const missing=[...resourceFailures.values()].filter(r=>!recorded.has(r.url)&&!recorded.has(redirectAliases.get(r.url)));
-    const warnings=[...errors,...missing.map(r=>`${r.type}: ${r.reason}`),...iconReport.missing.map(r=>JSON.stringify(r))];
+    const missing=[...[...resourceFailures.values()].filter(r=>!recorded.has(r.url)&&!recorded.has(redirectAliases.get(r.url))),...iconReport.missing.map(r=>({...r,type:r.kind,source:'icon-inventory'}))];
+    const warnings=[...errors,...missing.map(r=>`${r.type}: ${r.reason}`),...iconReport.missing.map(r=>`${r.kind}: ${r.reason || r.reference || r.url || 'unresolved'}`)];
     if(dom.truncated)warnings.push('DOM node budget exceeded');
     if(inventory.truncated)warnings.push('Resource inventory node budget exceeded');
-    for(const sheet of css.stylesheets)if(sheet.missingReason&&!sheet.originalPath)warnings.push(`Stylesheet unavailable: ${sheet.url || sheet.scope}`);
+    for(const sheet of css.stylesheets)if(sheet.readError&&!sheet.originalPath)warnings.push(`Stylesheet unavailable: ${sheet.url || sheet.scope}`);
     const limitations=['Original CSS and limited computed properties do not establish every winning cascade declaration.','Closed Shadow DOM is inaccessible. Iframe content is not captured; preview frames are blank. Canvas pixels are visible only in the screenshot.','Only the rendered initial page is observed. Lazy content outside this state is not explored.'];
     const write=(file,value)=>writeJsonFile(path.join(opts.out,file),{schemaVersion:3,...value});
     await write('components.json',{elements:dom.elements});
@@ -405,9 +437,11 @@ async function captureInto(opts) {
     await write('styles/computed.json',{elements:dom.computed});
     await write('styles/stylesheets.json',{...css,network});
     await write('assets.json',{resources:[...recorded.values()],missing,icons:iconReport});
+    const staticAudit=await auditSnapshot(opts.out);
+    if(staticAudit.issueCount)warnings.push(`Static resource audit found ${staticAudit.issueCount} unresolved references; see report.staticAudit`);
     timings.output=performance.now()-phase;timings.total=performance.now()-started;
     const status=warnings.length?'partial':'ok';
-    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,limitations,warnings,timingsMs:timings,previewGenerated:true,resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
+    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,staticAudit,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,limitations,warnings,timingsMs:timings,previewGenerated:true,nodeCpuTimeMs:Object.fromEntries(Object.entries(process.cpuUsage(cpuStarted)).map(([key,value])=>[key,value/1000])),resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
     return {status,url:page.url(),output:opts.out,files:{html:'index.html',components:'components.json',layout:'layout.json',styles:'styles/stylesheets.json',report:'report.json'},warnings};
-  }finally{await context?.close();await browser?.close();}
+  }finally{await resourceClient?.dispose();await context?.close();await browser?.close();}
 }

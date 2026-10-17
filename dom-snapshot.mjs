@@ -7,15 +7,16 @@ export async function captureDOM(page,{maxNodes=5000}={}) {
     let totalNodes=0,shadowRoots=0,iframes=0,canvases=0;
     function walk(el,parentElementId=null,scope='document') {
       if(el.nodeType!==1)return;
-      if(['script','noscript'].includes(el.localName)||el.matches('input[type=hidden]'))return;
+      if(['script','noscript'].includes(el.localName)||el.matches('input[type=hidden]')||(el.localName==='meta'&&/token|secret|csrf|authorization|api[_-]?key/i.test(el.getAttribute('name')||'')))return;
       totalNodes++;
       let id=null;
       if(elements.length<maxNodes){
         id=`element-${String(elements.length+1).padStart(6,'0')}`;
-        const sensitive=el.matches('input[type=password],input[type=file]')||/token|secret|password/i.test(`${el.id} ${el.getAttribute('name')||''}`);
+        const sensitive=el.matches('input[type=password],input[type=file]')||/token|secret|password|csrf|api[_-]?key|session|credential|authorization/i.test(`${el.id} ${el.getAttribute('name')||''}`);
         const attributes={};
         for(const {name,value} of el.attributes) {
-          if(/^on|token|secret|password|nonce|authorization|cookie/i.test(name)||/^data-(?:props|page|state-json|hydration|react-props|initial-state|server-data)$/.test(name)||name==='srcdoc'||(sensitive&&name==='value'))continue;
+          if(name.startsWith('data-') && /^[\s]*[\[{]/.test(value))continue;
+          if(/^on|token|secret|password|csrf|api[_-]?key|session|credential|authorization|nonce|cookie/i.test(name)||/^data-(?:props|page|state-json|hydration|react-props|initial-state|server-data)$/.test(name)||name==='srcdoc'||(sensitive&&name==='value'))continue;
           if(/^(?:href|src|action)$/i.test(name)&&/^javascript:/i.test(value))continue;
           attributes[name]=value;
         }

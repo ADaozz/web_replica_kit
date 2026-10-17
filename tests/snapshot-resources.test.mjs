@@ -38,3 +38,11 @@ test('attribute-like text inside a value is preserved verbatim', () => {
   assert.equal(finalizeSnapshotResources(html),
     '<img src="assets/icon.png" title=\'keep crossorigin="anonymous" and integrity="old"\'>');
 });
+
+test('mixed data URL srcset preserves embedded bytes and localizes external candidates',async()=>{
+  const {rewriteSrcsetUrls}=await import('../snapshot-resources.mjs');
+  const input='data:image/svg+xml,%3Csvg%3E%3C/svg%3E 1x, https://example.test/large.png 2x';
+  const expected='data:image/svg+xml,%3Csvg%3E%3C/svg%3E 1x, assets/large.png 2x';
+  assert.equal(rewriteSrcsetUrls(input,url=>url==='https://example.test/large.png'?'assets/large.png':url),expected);
+  assert.ok(rewriteSnapshotAssets(`<img srcset="${input}">`,{'https://example.test/large.png':'assets/large.png'},'https://example.test/').includes(expected));
+});

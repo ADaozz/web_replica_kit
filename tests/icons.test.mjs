@@ -17,7 +17,7 @@ const css = `body { margin: 0; background: white; } svg, img, .icon { width: 40p
 .mask { background: #128040; mask: url('../mask.svg#shape') center/contain no-repeat; }`;
 const integrity = 'sha256-' + crypto.createHash('sha256').update(css).digest('base64');
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-<symbol id="square" viewBox="0 0 40 40"><path fill="#e84820" d="M2 2h36v36H2z"/></symbol>
+<script>SVG_SCRIPT_SECRET()</script><!-- SVG_COMMENT_SECRET --><symbol id="square" onload="SVG_HANDLER_SECRET()" viewBox="0 0 40 40"><path fill="#e84820" d="M2 2h36v36H2z"/></symbol>
 <symbol id="circle" viewBox="0 0 40 40"><circle fill="#1b62ca" cx="20" cy="20" r="18"/></symbol>
 <path fill="#b345b3" d="M20 2 38 38H2z"/></svg>`;
 const mask = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle id="shape" fill="black" cx="20" cy="20" r="18"/></svg>';
@@ -76,11 +76,14 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
     const html = await fs.readFile(path.join(out, 'index.html'), 'utf8');
     const {resources:assets,icons} = JSON.parse(await fs.readFile(path.join(out, 'assets.json'), 'utf8'));
     assert.equal(icons.complete, true);
+    for(const secret of ['SVG_SCRIPT_SECRET','SVG_HANDLER_SECRET','SVG_COMMENT_SECRET'])assert.ok(!html.includes(secret));
     assert.equal(icons.shadowRoots, 1);
     assert.ok(html.includes('shadowrootmode="open"'), 'shadow icon serialized');
     assert.ok(html.includes('.glyph'), 'adopted shadow styles serialized');
     const sprite = assets.find(asset => asset.url === sourceUrl + '/sprite.svg?theme=light');
     assert.ok(sprite, 'sprite resource saved');
+    const safeSvg=await fs.readFile(path.join(out,sprite.localPath),'utf8');
+    for(const secret of ['SVG_SCRIPT_SECRET','SVG_HANDLER_SECRET','SVG_COMMENT_SECRET'])assert.ok(!safeSvg.includes(secret));
     assert.ok(html.includes('href="#square"') && html.includes('<symbol id="square"'), 'sprite embedded for file previews');
     assert.ok(html.includes('xlink:href="#circle"') && html.includes('<symbol id="circle"'));
     assert.ok(html.includes('href="#inline"'), 'inline references preserved');
