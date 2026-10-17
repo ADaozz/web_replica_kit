@@ -78,6 +78,8 @@ stdout 只输出一行 JSON；错误诊断写入 stderr。退出码稳定：`0` 
 
 页面就绪诊断写入 `report.readiness`（status、reason、readySelectorMatched）：`content-observed` 正常继续；`verification-gate`、`loading-placeholder`、`empty-rendered-body` 写入警告并返回 partial；`unknown` 保留不确定性，不自动判定失败。登录 URL 不单独触发异常，只有图片/Canvas 的已渲染页面也可正常采集。这些判断不是访问控制或目标页面身份的证明。诊断不刷新、不绕过验证、不跳页。显式 `--ready-selector` 等待失败仍返回 failed；成功时 matched=true，未指定为 null。`--manual` 的用户确认记录单独保留，诊断不会覆盖它。
 
+`content-observed` 不保证每个异步局部模块已加载。对 Ant Design 示例等页面，可用实际控件作为 `--ready-selector`，例如 `'#switch-demo-basic button[role=switch]'`；不会因此自动点击或展开控件。
+
 ## 读取产物
 
 ```text
@@ -154,3 +156,5 @@ CSS 隐藏的菜单（例如 display:none、visibility:hidden、opacity:0）只�
 `npm run test:hidden` 在本地夹具中定点验证 CSS Hover 菜单、透明祖先、Shadow DOM 和 JS 动态挂载。另有 `node scripts/verify-hover-menus.mjs FRESH_DIRECTORY` 对三个固定公开目标做用户要求的单次悬停验证，属于独立测试工具，不被 discover/capture 调用，也不访问菜单链接。网络限制会如实记录。
 
 静态采集不推测悬停后才由 JavaScript 创建的菜单，也不恢复事件处理器。需要这些 DOM 时，可用 --manual 由用户展开后确认再采集。纯 CSS :hover 规则会保留，但静态预览不会自动锁住鼠标状态，也不会把 JS 菜单行为变成可用交互。
+
+本轮四项静态可靠性修复、各阶段 Commit、完整测试和四站新视觉对照见 [修复验收报告](references/static-reliability-validation.md)。报告区分 FIXED、PARTIALLY_FIXED、UNRESOLVED 与 NOT_TESTED。
