@@ -26,7 +26,7 @@ test('independent discovery and capture produce safe schema 3, one page and exac
  const nav=JSON.parse(await fs.readFile(path.join(navOut,'navigation.json')));assert.equal(nav.entries.find(e=>e.url.endsWith('/never')).sources.length,2);assert.ok(!visited.includes('/never'));
  const out=path.join(directory,'capture');const result=await command(['--url',url,'--out',out,'--wait','0','--clean-noise']);assert.equal(result.code,0,JSON.stringify(result.result));assert.equal(result.result.status,'ok');
  const read=async f=>JSON.parse(await fs.readFile(path.join(out,f)));
- const report=await read('report.json');assert.equal(report.schemaVersion,3);assert.equal(report.previewGenerated,true);assert.equal(report.cleanup.removedCount,2);
+ const report=await read('report.json');assert.equal(report.schemaVersion,3);assert.equal(report.previewGenerated,true);assert.equal(report.cleanup.automatic,true);assert.equal(report.cleanup.removedCount,2);
  const assets=await read('assets.json');assert.ok(!assets.resources.some(r=>r.type==='script'));assert.ok(!visited.includes('/never'));
  const css=await read('styles/stylesheets.json');assert.equal(css.network.length,1);assert.match(await fs.readFile(path.join(out,css.network[0].originalPath),'utf8'),/ORIGINAL_CSS/);
  const html=await fs.readFile(path.join(out,'index.html'),'utf8');for(const secret of ['SOURCE_BUNDLE_SENTINEL','HYDRATION_SECRET','COMMENT_SECRET','HANDLER_SECRET','CSRF_SECRET','API_SECRET','PRIVATE_COOKIE','AD_NOISE'])assert.ok(!html.includes(secret),secret);
@@ -89,8 +89,12 @@ test('default capture preserves ads, modal and scroll lock; explicit selectors r
  const components=JSON.stringify(JSON.parse(await fs.readFile(path.join(normal,'components.json'))));assert.ok(components.includes('AD_REFERENCE'));
  browser=await chromium.launch();const page=await browser.newPage({viewport:report.viewport});await page.goto(pathToFileURL(path.join(normal,'index.html')).href);assert.deepEqual(await page.screenshot(),await fs.readFile(path.join(normal,'screenshot.png')));assert.equal(await page.locator('body').evaluate(e=>getComputedStyle(e).overflow),'hidden');
  const selected=path.join(dir,'selected');assert.equal((await command(['--url',url,'--out',selected,'--wait','0','--remove-selector','#shadow-ad,[role=dialog]'])).code,0);
- const cleaned=JSON.parse(await fs.readFile(path.join(selected,'report.json')));assert.equal(cleaned.cleanup.removedCount,2);assert.ok(cleaned.cleanup.removed.every(e=>e.reason==='user-selector'));
+ const cleaned=JSON.parse(await fs.readFile(path.join(selected,'report.json')));assert.equal(cleaned.cleanup.automatic,false);assert.equal(cleaned.cleanup.removedCount,2);assert.ok(cleaned.cleanup.removed.every(e=>e.reason==='user-selector'));
  const output=await fs.readFile(path.join(selected,'index.html'),'utf8');assert.ok(output.includes('AD_REFERENCE'));assert.ok(output.includes('Backdrop'));assert.ok(!output.includes('SHADOW_AD_REFERENCE'));assert.ok(!output.includes('Special offer'));
  const invalid=await command(['--url',url,'--out',path.join(dir,'invalid'),'--wait','0','--remove-selector','[']);assert.equal(invalid.code,1);assert.match(invalid.result.error,/selector/i);
+ const bothDir=path.join(dir,'both');assert.equal((await command(['--url',url,'--out',bothDir,'--wait','0','--clean-noise','--remove-selector','#shadow-ad'])).code,0);
+ const both=JSON.parse(await fs.readFile(path.join(bothDir,'report.json')));assert.equal(both.cleanup.automatic,true);assert.equal(both.cleanup.removedCount,4);
+ assert.ok(both.cleanup.removed.some(e=>e.reason==='user-selector'));assert.ok(both.cleanup.removed.some(e=>e.reason==='advertisement'));assert.ok(both.cleanup.removed.some(e=>e.reason==='promotional-dialog'));
+ const bothHtml=await fs.readFile(path.join(bothDir,'index.html'),'utf8');assert.ok(bothHtml.includes('Page'));assert.ok(!bothHtml.includes('AD_REFERENCE'));assert.ok(!bothHtml.includes('SHADOW_AD_REFERENCE'));assert.ok(!bothHtml.includes('Special offer'));
  }finally{await browser?.close();await new Promise(r=>server.close(r));await fs.rm(dir,{recursive:true,force:true});}
 });

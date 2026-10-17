@@ -49,6 +49,6 @@ export async function cleanPage(page,{cleanNoise=false,removeSelector}={}) {
         if(el.style.overflow==='hidden')el.style.removeProperty('overflow');
       }
     }
-    return {automatic:!cleanNoise,removeSelector:removeSelector || null,removedCount:removed.length,removed,limitations:['Conservative markers only; unmarked ads and loaders may remain. Removing a loader does not render unfinished content. No controls were clicked.']};
+    return {automatic:Boolean(cleanNoise),removeSelector:removeSelector || null,removedCount:removed.length,removed,limitations:['Conservative markers only; unmarked ads and loaders may remain. Removing a loader does not render unfinished content. No controls were clicked.']};
   },{cleanNoise,removeSelector});
 }
