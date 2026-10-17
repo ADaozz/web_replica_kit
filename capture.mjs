@@ -374,6 +374,7 @@ async function captureInto(opts) {
         try{response=await resourceClient.get(url,{timeout:12000});}
         catch(error){throw new Error(String(error.message).split('\n')[0]);}
         try {
+          if(response.status()<200 || response.status()>=300)throw new Error(`HTTP ${response.status()}`);
           if (!shouldStore('',response.headers()['content-type'] || ''))throw new Error('Unsupported static resource content type');
           if (Number(response.headers()['content-length']) > MAX_PER_FILE) throw new Error('File exceeds size budget');
           return { status: response.status(), url: response.url(),
@@ -435,7 +436,7 @@ async function captureInto(opts) {
     assertSnapshotHtml(html);
     await fs.writeFile(path.join(opts.out,'index.html'),html);
     const missing=[...[...resourceFailures.values()].filter(r=>!recorded.has(r.url)&&!recorded.has(redirectAliases.get(r.url))),...iconReport.missing.map(r=>({...r,type:r.kind,source:'icon-inventory'}))];
-    const warnings=[...errors,...missing.map(r=>`${r.type}: ${r.reason}`),...iconReport.missing.map(r=>`${r.kind}: ${r.reason || r.reference || r.url || 'unresolved'}`)];
+    const warnings=[...errors,...missing.map(r=>`${r.type || r.kind}: ${r.reason || r.reference || r.url || 'unresolved'}`)];
     if(dom.truncated)warnings.push('DOM node budget exceeded');
     if(inventory.truncated)warnings.push('Resource inventory node budget exceeded');
     for(const sheet of css.stylesheets)if(sheet.readError&&!sheet.originalPath)warnings.push(`Stylesheet unavailable: ${sheet.url || sheet.scope}`);

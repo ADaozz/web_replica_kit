@@ -125,6 +125,8 @@ npm run test:e2e
 npm run test:scroll
 npm run test:css
 npm run test:sites
+npm run test:complex-sites
+npm run test:hidden
 ```
 
 站点测试使用 [固定的六个公开目标](tests/site-matrix.json)，各自先 discover，再 capture 已明确选定的同一 URL，最后在阻断外部 HTTP 请求的预览中比较同视口截图。`--only bootstrap-sidebars` 可选择子集，`--out` 指定新的测试目录。结果写入 `test-results/`，不会发布网页内容。像素差异只作为待审阅证据。
@@ -138,3 +140,13 @@ node scripts/benchmark-static.mjs --baseline /path/to/old-checkout \
 ```
 
 默认使用静态变量/深层 DOM 夹具，避免旧版自动滚动与懒加载造成状态偏差。脚本记录 Wall Time、采样进程树 CPU 时间、Node RSS、Chromium RSS 合计和输出字节数；超时是未完成观测，不能当作成功基线。已执行范围与剩余验收见 [验证报告](references/validation.md)。维护约定见 [AGENTS.md](AGENTS.md)。
+
+## 复杂网页与隐藏菜单验证
+
+`npm run test:complex-sites -- --out FRESH_DIRECTORY` 使用 [20 个固定复杂目标](tests/complex-site-matrix.json)，包含 ChatGPT、Cursor、Anthropic、Claude、Vercel 等。发现失败也会独立尝试 capture；结构 ID、父子关系、几何、脚本资源过滤，以及 file/HTTP 离线预览分别检查。源页面额外等待 3 秒，结构预算 10,000 元素；预览等待 fonts.ready 后再使用同一 3 秒等待量。`measured` 只表示已取得对照数据，不代表资源完整或视觉通过。结果见 [20 站报告](references/complex-sites-validation.md)。
+
+CSS 隐藏的菜单（例如 display:none、visibility:hidden、opacity:0）只要已经存在于 DOM，仍会进入 components.json；通过 elementId 关联 layout.json 检查 visible 和 computed 样式。Open Shadow DOM 同样可读取。新增 inViewport 用于区分视口外元素；visible 不是完整像素遮挡判定。
+
+`npm run test:hidden` 在本地夹具中定点验证 CSS Hover 菜单、透明祖先、Shadow DOM 和 JS 动态挂载。另有 `node scripts/verify-hover-menus.mjs FRESH_DIRECTORY` 对三个固定公开目标做用户要求的单次悬停验证，属于独立测试工具，不被 discover/capture 调用，也不访问菜单链接。网络限制会如实记录。
+
+静态采集不推测悬停后才由 JavaScript 创建的菜单，也不恢复事件处理器。需要这些 DOM 时，可用 --manual 由用户展开后确认再采集。纯 CSS :hover 规则会保留，但静态预览不会自动锁住鼠标状态，也不会把 JS 菜单行为变成可用交互。

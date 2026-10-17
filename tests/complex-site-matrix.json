@@ -1,0 +1,102 @@
+[
+  {
+    "id": "chatgpt",
+    "url": "https://chatgpt.com/",
+    "coverage": "聊天应用、流式页面与访问验证"
+  },
+  {
+    "id": "cursor",
+    "url": "https://cursor.com/",
+    "coverage": "复杂营销页面、字体、媒体与动画"
+  },
+  {
+    "id": "anthropic",
+    "url": "https://www.anthropic.com/",
+    "coverage": "多段内容、响应式布局与字体"
+  },
+  {
+    "id": "claude",
+    "url": "https://claude.ai/",
+    "coverage": "应用入口、认证与验证边界"
+  },
+  {
+    "id": "openai",
+    "url": "https://openai.com/",
+    "coverage": "大型营销页、动态内容与媒体"
+  },
+  {
+    "id": "perplexity",
+    "url": "https://www.perplexity.ai/",
+    "coverage": "搜索应用、页面初始化与访问验证"
+  },
+  {
+    "id": "v0",
+    "url": "https://v0.app/",
+    "coverage": "生成式应用入口与复杂布局"
+  },
+  {
+    "id": "lovable",
+    "url": "https://lovable.dev/",
+    "coverage": "生成式应用、渐变与动态 CSS"
+  },
+  {
+    "id": "bolt",
+    "url": "https://bolt.new/",
+    "coverage": "Web IDE 入口与动态样式"
+  },
+  {
+    "id": "replit",
+    "url": "https://replit.com/",
+    "coverage": "IDE 产品页、媒体与资源依赖"
+  },
+  {
+    "id": "vercel",
+    "url": "https://vercel.com/",
+    "coverage": "大型 CSS、SVG、背景与 Grid"
+  },
+  {
+    "id": "linear",
+    "url": "https://linear.app/",
+    "coverage": "产品营销、复杂字体和动画"
+  },
+  {
+    "id": "notion",
+    "url": "https://www.notion.com/",
+    "coverage": "大型应用营销页和内容块"
+  },
+  {
+    "id": "figma",
+    "url": "https://www.figma.com/",
+    "coverage": "设计工具营销、媒体与访问边界"
+  },
+  {
+    "id": "framer",
+    "url": "https://www.framer.com/",
+    "coverage": "动态营销页、动画与布局"
+  },
+  {
+    "id": "supabase",
+    "url": "https://supabase.com/",
+    "coverage": "开发者产品页、CSS 条件和资源"
+  },
+  {
+    "id": "stripe",
+    "url": "https://stripe.com/",
+    "coverage": "复杂营销布局、渐变与 Canvas 边界"
+  },
+  {
+    "id": "github-copilot",
+    "url": "https://github.com/features/copilot",
+    "coverage": "大型产品页、组件与图片资源"
+  },
+  {
+    "id": "shadcn-sidebar",
+    "url": "https://ui.shadcn.com/docs/components/sidebar",
+    "coverage": "文档侧栏、示例和条件样式"
+  },
+  {
+    "id": "ant-design-table",
+    "url": "https://ant.design/components/table/",
+    "coverage": "复杂表格、CSS-in-JS 和大型 DOM"
+  }
+]

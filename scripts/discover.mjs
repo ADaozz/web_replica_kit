@@ -32,10 +32,10 @@ export function scanNavigation() {
       const selector=prefix+el.localName+`:nth-of-type(${[...el.parentNode.children].filter(n=>n.localName===el.localName).indexOf(el)+1})`;
       const raw=el.getAttribute('href') ?? el.getAttribute('xlink:href') ?? el.getAttribute('data-href') ?? el.getAttribute('data-url');
       if(raw!==null && (['a','area'].includes(el.localName)||el.matches('[role=link],[role=menuitem],[data-href],[data-url],nav *,header *,aside *,footer *'))) {
-        const rect=el.getBoundingClientRect(),style=getComputedStyle(el);
+        const rect=el.getBoundingClientRect();
         let container=el,region='other';
         while(container){const nearest=container.closest('header,nav,aside,main,footer');if(nearest){region=nearest.localName;break;}container=container.getRootNode()?.host;}
-        links.push({label:(el.innerText || el.textContent || '').trim().replace(/\s+/g,' ').slice(0,500)||el.getAttribute('aria-label')||el.getAttribute('title')||el.querySelector('img')?.alt||'',href:raw,region,selector,visible:!!(rect.width&&rect.height)&&style.visibility!=='hidden'&&style.display!=='none',baseUrl:el.baseURI});
+        links.push({label:(el.innerText || el.textContent || '').trim().replace(/\s+/g,' ').slice(0,500)||el.getAttribute('aria-label')||el.getAttribute('title')||el.querySelector('img')?.alt||'',href:raw,region,selector,visible:!!(rect.width&&rect.height)&&el.checkVisibility({checkOpacity:true,checkVisibilityCSS:true}),baseUrl:el.baseURI});
       }
       if(el.shadowRoot)walk(el.shadowRoot,selector+' >>> ');
       walk(el,selector+' > ');
