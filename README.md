@@ -76,6 +76,8 @@ node scripts/capture.mjs --url https://example.com --out ./output/clean \
 
 stdout 只输出一行 JSON；错误诊断写入 stderr。退出码稳定：`0` 为 `ok`，`2` 为 `partial`（证据可用但有预算截断或缺失），`1` 为 `failed`。调用方应解析 JSON，并读取 `report.json`；不能把退出码 2 当作完全失败或完全成功。失败可能留下未完成文件，重新运行必须换空目录。
 
+页面就绪诊断写入 `report.readiness`（status、reason、readySelectorMatched）：`content-observed` 正常继续；`verification-gate`、`loading-placeholder`、`empty-rendered-body` 写入警告并返回 partial；`unknown` 保留不确定性，不自动判定失败。登录 URL 不单独触发异常，只有图片/Canvas 的已渲染页面也可正常采集。这些判断不是访问控制或目标页面身份的证明。诊断不刷新、不绕过验证、不跳页。显式 `--ready-selector` 等待失败仍返回 failed；成功时 matched=true，未指定为 null。`--manual` 的用户确认记录单独保留，诊断不会覆盖它。
+
 ## 读取产物
 
 ```text

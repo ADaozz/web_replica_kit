@@ -10,3 +10,4 @@ import './page-cleanup.test.mjs';
 import './manual-confirmation.test.mjs';
 import './snapshot-validation.test.mjs';
 import './site-verification.test.mjs';
+import './readiness.test.mjs';

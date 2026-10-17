@@ -1,3 +1,4 @@
+import {inspectPageReadiness} from './page-readiness.mjs';
 import {decodeVideoFrame} from './video-static.mjs';
 import {assertSnapshotHtml} from './snapshot-validation.mjs';
 import {waitForConfirmation} from './scripts/manual-confirmation.mjs';
@@ -454,6 +455,8 @@ async function captureInto(opts) {
     let phase=performance.now();
     const cleanup=opts.cleanNoise || opts.removeSelector?await cleanPage(page,opts):{automatic:false,removeSelector:null,removedCount:0,removed:[],limitations:[]};
     timings.cleanup=performance.now()-phase;phase=performance.now();
+    const readiness=await inspectPageReadiness(page,{readySelectorMatched:opts.readySelector?true:null});
+    timings.readiness=performance.now()-phase;phase=performance.now();
     const dom=await captureDOM(page,{maxNodes:opts.maxNodes});
     timings.dom=performance.now()-phase;phase=performance.now();
     const css=await captureStylesheets(page);
@@ -576,6 +579,7 @@ async function captureInto(opts) {
     await fs.writeFile(path.join(opts.out,'index.html'),html);
     const missing=[...[...resourceFailures.values()].filter(r=>!recorded.has(r.url)&&!recorded.has(redirectAliases.get(r.url))),...iconReport.missing.map(r=>({...r,type:r.kind,source:'icon-inventory'}))];
     const warnings=[...errors,...missing.map(r=>`${r.type || r.kind}: ${r.reason || r.reference || r.url || 'unresolved'}`)];
+    if(['verification-gate','loading-placeholder','empty-rendered-body'].includes(readiness.status))warnings.push(`Page readiness: ${readiness.status}: ${readiness.reason}`);
     for(const frame of settledSnapshot.videos)if(frame.status==='unavailable')warnings.push(`Video ${frame.index}: ${frame.reason}`);
     for(const frame of settledSnapshot.canvases)if(frame.status!=='captured')warnings.push(`Canvas ${frame.index}: ${frame.reason}`);
     if(dom.truncated)warnings.push('DOM node budget exceeded');
@@ -592,7 +596,7 @@ async function captureInto(opts) {
     if(staticAudit.issueCount)warnings.push(`Static resource audit found ${staticAudit.issueCount} unresolved references; see report.staticAudit`);
     timings.output=performance.now()-phase;timings.total=performance.now()-started;
     const status=warnings.length?'partial':'ok';
-    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,confirmation,cleanup,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,staticAudit,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,canvasSnapshots:settledSnapshot.canvases,videoSnapshots:settledSnapshot.videos,animationSnapshots:settledSnapshot.animations,limitations,warnings,timingsMs:timings,previewGenerated:true,nodeCpuTimeMs:Object.fromEntries(Object.entries(process.cpuUsage(cpuStarted)).map(([key,value])=>[key,value/1000])),resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
+    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,confirmation,cleanup,readiness,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,staticAudit,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,canvasSnapshots:settledSnapshot.canvases,videoSnapshots:settledSnapshot.videos,animationSnapshots:settledSnapshot.animations,limitations,warnings,timingsMs:timings,previewGenerated:true,nodeCpuTimeMs:Object.fromEntries(Object.entries(process.cpuUsage(cpuStarted)).map(([key,value])=>[key,value/1000])),resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
     return {status,url:page.url(),output:opts.out,files:{html:'index.html',components:'components.json',layout:'layout.json',styles:'styles/stylesheets.json',report:'report.json'},warnings};
   }finally{await resourceClient?.dispose();await context?.close();await browser?.close();}
 }

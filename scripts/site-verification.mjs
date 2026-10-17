@@ -1,3 +1,4 @@
+import {assessRenderedPage} from '../page-readiness.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -17,14 +18,6 @@ export function classifyFailure(error,stage) {
   else if(error.killed || error.signal)classification='process-budget-exceeded';
   else if(/locator.waitFor: Timeout/.test(message))classification='readiness-timeout';
   return {classification,error:message};
-}
-export function assessRenderedPage({title='',url='',text='',visibleMedia=0}) {
-  const content=text.trim();
-  if(/just a moment|attention required.*cloudflare|verify (?:that )?you are human|checking your browser/i.test(title)||/^(?:verify (?:that )?you are human|enable javascript and cookies|checking your browser)/i.test(content))return 'verification-gate';
-  try{if(/\/(?:auth|login|log-in|signin|sign-in)(?:\/|$)/i.test(new URL(url).pathname))return 'authentication-route';}catch{}
-  if(/^(?:undefined|null|loading[.!…\s]*|please wait[.!…\s]*|加载中[.!…\s]*)$/i.test(content))return 'error-or-loading-content';
-  if(!content&&!visibleMedia)return 'empty-rendered-body';
-  return 'content-observed';
 }
 export function verifyStructure({components,layout,computed,assets,report}) {
   for(const doc of [components,layout,computed,assets,report])if(doc.schemaVersion!==3)throw new Error('Unexpected output schema');
