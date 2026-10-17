@@ -18,10 +18,10 @@ test('complex static audit separates saved-but-remote sprites, missing symbols a
 <use href="#missing"/><use href="assets/sprite.svg#search"/>
 <use xlink:href="assets/sprite.svg#absent"/>
 <use href="https://example.test/sprite.svg#search"/></svg>`);
-    await fs.writeFile(path.join(out, 'assets.json'), JSON.stringify([
+    await fs.writeFile(path.join(out, 'assets.json'), JSON.stringify({schemaVersion:3,resources:[
       { url: 'https://example.test/sprite.svg', localPath: 'assets/sprite.svg' },
       { url: 'https://example.test/icons.css', localPath: 'assets/icons.css' }
-    ]));
+    ]}));
     const audit = await auditSnapshot(out);
     assert.equal(audit.visualVerification, false);
     assert.equal(audit.stats.svgUses, 5);
@@ -42,7 +42,7 @@ test('a clean static audit still does not imply browser or visual verification',
   const out = await fs.mkdtemp(path.join(os.tmpdir(), 'snapshot-clean-'));
   try {
     await fs.writeFile(path.join(out, 'index.html'), '<svg><path id="icon"/><use href="#icon"/></svg>');
-    await fs.writeFile(path.join(out, 'assets.json'), '[]');
+    await fs.writeFile(path.join(out, 'assets.json'), '{"schemaVersion":3,"resources":[]}');
     const audit = await auditSnapshot(out);
     assert.equal(audit.issueCount, 0);
     assert.equal(audit.visualVerification, false);
@@ -55,7 +55,7 @@ test('inactive nested templates neither report missing sprites nor define active
     await fs.writeFile(path.join(out, 'index.html'), `<template><svg><use href="/missing.svg#icon"/>
 <path id="inactive"/></svg><template><svg><use href="#absent"/></svg></template></template>
 <svg><use href="#inactive"/><path id="real"/><use href="#real"/></svg>`);
-    await fs.writeFile(path.join(out, 'assets.json'), '[]');
+    await fs.writeFile(path.join(out, 'assets.json'), '{"schemaVersion":3,"resources":[]}');
     const audit = await auditSnapshot(out);
     assert.equal(audit.stats.excludedTemplateSvgUses, 2);
     assert.equal(audit.stats.svgUses, 2);

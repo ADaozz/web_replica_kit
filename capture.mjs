@@ -1,3 +1,4 @@
+import {reserveOutput} from './scripts/output-directory.mjs';
 import {writeJsonFile} from './json-writer.mjs';
 import {captureDOM} from './dom-snapshot.mjs';
 import {captureStylesheets} from './css-rule-capture.mjs';
@@ -31,10 +32,10 @@ function fileExt(url, contentType, resourceType) {
   return knownExt.has(ext) ? ext : '.bin';
 }
 function shouldStore(resourceType, contentType) {
-  if (resourceType === 'script') return false;
+  if (resourceType === 'script' || /(?:javascript|ecmascript|text\/html|json)/i.test(contentType || '')) return false;
   const t = (contentType || '').toLowerCase();
   return ['image', 'font', 'stylesheet', 'media'].includes(resourceType) ||
-    /^(?:image\/|font\/|text\/css)/.test(t);
+    /^(?:image\/|font\/|text\/css|application\/(?:font|x-font))/.test(t);
 }
 function isHttpUrl(value) {
   try { return ['http:', 'https:'].includes(new URL(value).protocol); }
@@ -232,9 +233,11 @@ export async function makeSnapshotHtml(page, assetMap) {
 }
 
 export async function capture(opts) {
+  const release=await reserveOutput(opts.out);
+  try{return await captureInto(opts);}finally{await release();}
+}
+async function captureInto(opts) {
   const started=performance.now(),timings={};
-  const existing=await fs.readdir(opts.out).catch(error=>{if(error.code==='ENOENT')return [];throw error;});
-  if(existing.length)throw new Error('Output directory must be empty; choose a fresh --out directory to avoid mixing evidence from different captures.');
   await fs.mkdir(path.join(opts.out, 'assets'), { recursive: true });
   const recorded = new Map();
   const redirectAliases = new Map();
@@ -316,7 +319,7 @@ export async function capture(opts) {
 
     const response=await page.goto(opts.url,{waitUntil:'domcontentloaded',timeout:45000});
     if(response?.status()>=400)throw new Error(`HTTP ${response.status()}`);
-    if(opts.readySelector)await page.locator(opts.readySelector).waitFor({timeout:opts.readyTimeout});
+    if(opts.readySelector)await page.locator(opts.readySelector).filter({visible:true}).first().waitFor({timeout:opts.readyTimeout});
     await page.waitForTimeout(opts.wait);
     timings.load=performance.now()-started;
     let phase=performance.now();

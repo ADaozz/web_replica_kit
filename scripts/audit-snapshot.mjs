@@ -9,6 +9,7 @@ function withoutTemplates(html) {
   let result = '';
   for (const match of html.matchAll(/<\/?template\b[^>]*>/gi)) {
     if (!match[0].startsWith('</')) {
+      if(depth===0 && /shadowrootmode\s*=/.test(match[0]))continue;
       if (depth === 0) result += html.slice(start, match.index);
       depth++;
     } else if (depth > 0) {
@@ -24,7 +25,7 @@ export async function auditSnapshot(directory) {
   const root = path.resolve(directory);
   const html = await fs.readFile(path.join(root, 'index.html'), 'utf8');
   const activeHtml = withoutTemplates(html);
-  const assets = JSON.parse(await fs.readFile(path.join(root, 'assets.json'), 'utf8'));
+  const {resources: assets} = JSON.parse(await fs.readFile(path.join(root, 'assets.json'), 'utf8'));
   const mapping = new Map(assets.flatMap(a => [a.url, ...(a.aliases || [])].map(url => [url, a.localPath])));
   const issues = [];
   const stats = { assets: assets.length, svgUses: 0,

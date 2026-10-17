@@ -1,6 +1,6 @@
 #!/usr/bin/env node
+import {reserveOutput} from './output-directory.mjs';
 import {chromium} from 'playwright';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {writeJsonFile} from '../json-writer.mjs';
@@ -43,26 +43,25 @@ export function scanNavigation() {
   return links;
 }
 export async function discover(opts) {
-  await fs.mkdir(opts.out,{recursive:true});
-  if((await fs.readdir(opts.out)).length)throw new Error('Output directory must be empty');
-  const browser=await chromium.launch({headless:!opts.headed,executablePath:opts.executablePath});
+  const release=await reserveOutput(opts.out);
+  let browser;
   try {
+  browser=await chromium.launch({headless:!opts.headed,executablePath:opts.executablePath});
     const page=await browser.newPage({viewport:{width:opts.width,height:opts.height},serviceWorkers:'block'});
     const response=await page.goto(opts.url,{waitUntil:'domcontentloaded',timeout:45000});
     if(response?.status()>=400)throw new Error(`HTTP ${response.status()}`);
-    if(opts.readySelector)await page.locator(opts.readySelector).waitFor({timeout:opts.readyTimeout});
+    if(opts.readySelector)await page.locator(opts.readySelector).filter({visible:true}).first().waitFor({timeout:opts.readyTimeout});
     await page.waitForTimeout(opts.wait);
     const links=await page.evaluate(scanNavigation);
-    const entries=groupNavigation(links.map(link=>({...link,href:link.href})),page.url());
     // Resolve against each entry's actual base URI, including <base href>.
     const resolved=groupNavigation(links.map(link=>({...link,href:classify(link.href,link.baseUrl).url})),page.url());
     for(const entry of resolved)for(const source of entry.sources){source.href=links.find(l=>l.selector===source.selector)?.href ?? source.href;}
     const data={schemaVersion:3,sourceUrl:opts.url,finalUrl:page.url(),entries:resolved,limitations:['Only explicit URLs in the rendered DOM and open Shadow DOM are included. JS-only routes, closed Shadow DOM and iframe navigation are not inferred. No discovered destination was visited.']};
     await writeJsonFile(path.join(opts.out,'navigation.json'),data);
     return {status:'ok',url:page.url(),output:opts.out,files:{navigation:'navigation.json'},warnings:[]};
-  }finally{await browser.close();}
+  }finally{await browser?.close();await release();}
 }
 if(process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href) {
   try{console.log(JSON.stringify(await discover(parseArgs(process.argv.slice(2)))));}
-  catch(error){console.log(JSON.stringify({status:'failed',error:error.message}));process.exitCode=1;}
+  catch(error){console.error(error.message);console.log(JSON.stringify({status:'failed',error:error.message}));process.exitCode=1;}
 }

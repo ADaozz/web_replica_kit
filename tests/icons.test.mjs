@@ -69,13 +69,12 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
   try {
     await new Promise((resolve, reject) => { source.once('error', reject); source.listen(0, '127.0.0.1', resolve); });
     const sourceUrl = `http://127.0.0.1:${source.address().port}`;
-    await exec(process.execPath, ['capture.mjs', '--url', sourceUrl + '/nested/', '--out', out,
+    await exec(process.execPath, ['scripts/capture.mjs', '--url', sourceUrl + '/nested/', '--out', out,
       '--ready-selector', '.ready', '--ready-timeout', '3000'], {
       cwd: root, timeout: 60000
     });
     const html = await fs.readFile(path.join(out, 'index.html'), 'utf8');
-    const assets = JSON.parse(await fs.readFile(path.join(out, 'assets.json'), 'utf8'));
-    const icons = JSON.parse(await fs.readFile(path.join(out, 'icons.json'), 'utf8'));
+    const {resources:assets,icons} = JSON.parse(await fs.readFile(path.join(out, 'assets.json'), 'utf8'));
     assert.equal(icons.complete, true);
     assert.equal(icons.shadowRoots, 1);
     assert.ok(html.includes('shadowrootmode="open"'), 'shadow icon serialized');
@@ -121,7 +120,7 @@ test('SVG sprite fragments, redirected URLs, CSS icons and base URLs survive off
     await page.goto(localUrl, { waitUntil: 'networkidle' });
     assert.equal(await page.locator('x-icon svg').count(), 1, 'declarative shadow icon renders without scripts');
     assert.equal(await page.locator('.external').evaluate(el => getComputedStyle(el).width), '40px');
-    const screenshot = await page.screenshot({ fullPage: true, animations: 'disabled' });
+    const screenshot = await page.screenshot({ animations: 'allow' });
     assert.deepEqual(failures, [], 'offline preview has no missing or remote requests');
     if (!screenshot.equals(await fs.readFile(path.join(out, 'screenshot.png')))) {
       const evidence = path.join(root, 'test-results', 'icon-pixel-diff');

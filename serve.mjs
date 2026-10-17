@@ -14,10 +14,9 @@ const types = {
 };
 export async function createPreviewServer(directory) {
   const root=path.resolve(directory);
-  const routes=await fs.readFile(path.join(root,'routes.json'),'utf8').then(JSON.parse).catch(()=>null);
   const report=await fs.readFile(path.join(root,'report.json'),'utf8').then(JSON.parse).catch(()=>null);
   const initialPaths=new Set(['/']);
-  for (const route of [routes?.initialRoute,report?.sourceUrl]) {
+  for (const route of [report?.inputUrl,report?.finalUrl]) {
     if (route) {try {initialPaths.add(new URL(route,'http://localhost').pathname);} catch {}}
   }
   return http.createServer(async (req, res) => {
