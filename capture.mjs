@@ -10,14 +10,14 @@ import {injectSnapshotScrollRuntime} from './snapshot-scroll.mjs';
 import {finalizeSnapshotResources,rewriteSnapshotAssets} from './snapshot-resources.mjs';
 const MB=1024*1024, MAX_PER_FILE=12*MB, MAX_TOTAL=120*MB;
 const mimeExt = new Map([
-  ['text/css', '.css'], ['text/javascript', '.js'], ['application/javascript', '.js'],
+  ['text/css', '.css'],
   ['image/png', '.png'], ['image/jpeg', '.jpg'], ['image/gif', '.gif'],
   ['image/webp', '.webp'], ['image/avif', '.avif'], ['image/svg+xml', '.svg'],
   ['image/x-icon', '.ico'], ['image/vnd.microsoft.icon', '.ico'],
   ['font/woff', '.woff'], ['font/woff2', '.woff2'],
   ['font/ttf', '.ttf'], ['font/otf', '.otf'],
-  ['application/font-woff', '.woff'], ['application/pdf', '.pdf'],
-  ['video/mp4', '.mp4'], ['audio/mpeg', '.mp3'], ['application/wasm', '.wasm']
+  ['application/font-woff', '.woff'],
+  ['video/mp4', '.mp4'], ['audio/mpeg', '.mp3']
 ]);
 const knownExt = new Set([...mimeExt.values()]);
 function fileExt(url, contentType, resourceType) {
@@ -116,6 +116,19 @@ export async function makeSnapshotHtml(page, assetMap) {
     const definedElements = [];
     function cloneRendered(source) {
       if(source.nodeType===Node.COMMENT_NODE || (source.nodeType===Node.ELEMENT_NODE && ['script','noscript'].includes(source.localName)))return document.createTextNode('');
+      if(source.localName==='link' && source.relList.contains('stylesheet') && source.sheet) {
+        try {
+          const style=document.createElement('style');
+          const base=source.sheet.href || source.baseURI;
+          style.textContent=[...source.sheet.cssRules].map(r=>r.cssText).join('\n').replace(/url\(\s*(['"]?)(.*?)\1\s*\)/gi,(_all,_q,raw)=>{
+            if(/^(?:data:|#)/i.test(raw))return `url("${raw}")`;
+            return `url("${new URL(raw,base).href}")`;
+          }).replace(/(@import\s+)(['"])([^'"\n]+)\2/gi,(_all,p,q,raw)=>p+q+new URL(raw,base).href+q);
+          if(source.media)style.media=source.media;
+          if(source.sheet.disabled)style.media='not all';
+          return style;
+        }catch{}
+      }
       const target = source.cloneNode(false);
       if (source.nodeType !== Node.ELEMENT_NODE) return target;
       if(source.localName==='input') {
@@ -173,7 +186,7 @@ export async function makeSnapshotHtml(page, assetMap) {
       for (const attribute of [...el.attributes]) {
         const name = attribute.name.toLowerCase();
         if (name.startsWith('on')) el.removeAttribute(attribute.name);
-        if (/token|secret|password|nonce|authorization|cookie/i.test(name) || (name.startsWith('data-') && !name.startsWith('data-wrk-'))) el.removeAttribute(attribute.name);
+        if (/token|secret|password|nonce|authorization|cookie/i.test(name) || /^data-(?:props|page|state-json|hydration|react-props|initial-state|server-data)$/.test(name)) el.removeAttribute(attribute.name);
         if (/^(?:href|src|action|xlink:href)$/.test(name) && /^javascript:/i.test(attribute.value))el.removeAttribute(attribute.name);
         if (name === 'ping') el.removeAttribute(attribute.name);
         if (name.startsWith('data-wrk-')) el.removeAttribute(attribute.name);

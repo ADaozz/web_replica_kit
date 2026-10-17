@@ -15,7 +15,7 @@ export async function captureDOM(page,{maxNodes=5000}={}) {
         const sensitive=el.matches('input[type=password],input[type=file]')||/token|secret|password/i.test(`${el.id} ${el.getAttribute('name')||''}`);
         const attributes={};
         for(const {name,value} of el.attributes) {
-          if(/^on|token|secret|password|nonce|authorization|cookie/i.test(name)||name.startsWith('data-')||name==='srcdoc'||(sensitive&&name==='value'))continue;
+          if(/^on|token|secret|password|nonce|authorization|cookie/i.test(name)||/^data-(?:props|page|state-json|hydration|react-props|initial-state|server-data)$/.test(name)||name==='srcdoc'||(sensitive&&name==='value'))continue;
           if(/^(?:href|src|action)$/i.test(name)&&/^javascript:/i.test(value))continue;
           attributes[name]=value;
         }
