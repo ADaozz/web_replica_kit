@@ -1,3 +1,4 @@
+import {assertSnapshotHtml} from './snapshot-validation.mjs';
 import {waitForConfirmation} from './scripts/manual-confirmation.mjs';
 import {cleanPage} from './page-cleanup.mjs';
 import {staticSheetText} from './css-static-text.mjs';
@@ -234,6 +235,7 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}) {
     const valid=await snapshot.evaluate(root=>!!root && root.nodeType===1 && root.localName==='html');
     if(!valid)throw new Error('Static preview did not produce an HTML document');
     const html = await snapshot.evaluate(root => (document.doctype ? new XMLSerializer().serializeToString(document.doctype)+'\n' : '') + root.outerHTML);
+    assertSnapshotHtml(html);
     return { html: injectSnapshotScrollRuntime(finalizeSnapshotResources(html)) };
   } finally { await snapshot.dispose(); }
 }
@@ -430,6 +432,7 @@ async function captureInto(opts) {
     const sprites=[];
     for(const r of recorded.values())if(r.localPath.endsWith('.svg'))sprites.push(await fs.readFile(path.join(opts.out,r.localPath),'utf8'));
     html=inlineSpriteSymbols(html,sprites);
+    assertSnapshotHtml(html);
     await fs.writeFile(path.join(opts.out,'index.html'),html);
     const missing=[...[...resourceFailures.values()].filter(r=>!recorded.has(r.url)&&!recorded.has(redirectAliases.get(r.url))),...iconReport.missing.map(r=>({...r,type:r.kind,source:'icon-inventory'}))];
     const warnings=[...errors,...missing.map(r=>`${r.type}: ${r.reason}`),...iconReport.missing.map(r=>`${r.kind}: ${r.reason || r.reference || r.url || 'unresolved'}`)];

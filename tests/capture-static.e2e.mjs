@@ -62,3 +62,14 @@ test('manual gate produces no snapshot before confirmation and captures the conf
  assert.equal(report.confirmation.confirmed,true);assert.equal(report.cleanup.removedCount,1);const html=await fs.readFile(path.join(directory,'index.html'),'utf8');assert.ok(html.includes('Confirmed content'));assert.ok(!html.includes('Remove me'));
  }finally{unblock();await running.catch(()=>{});await new Promise(r=>server.close(r));await fs.rm(directory,{recursive:true,force:true});}
 });
+test('serialization never accepts a returned function or an undefined outerHTML as a preview',async()=>{
+ const {makeSnapshotHtml}=await import('../capture.mjs');const browser=await chromium.launch();try{
+ const page=await browser.newPage();await page.setContent('<main>Real content</main>');
+ const evaluateHandle=page.evaluateHandle.bind(page);
+ page.evaluateHandle=()=>evaluateHandle('() => document.documentElement');
+ await assert.rejects(makeSnapshotHtml(page,{}),/did not produce an HTML document/);
+ page.evaluateHandle=evaluateHandle;
+ await page.evaluate(()=>Object.defineProperty(Element.prototype,'outerHTML',{configurable:true,get(){return undefined;}}));
+ await assert.rejects(makeSnapshotHtml(page,{}),/Invalid static preview/);
+ }finally{await browser.close();}
+});

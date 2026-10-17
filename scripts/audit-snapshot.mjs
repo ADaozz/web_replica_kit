@@ -1,3 +1,4 @@
+import {assertSnapshotHtml} from '../snapshot-validation.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -28,6 +29,8 @@ export async function auditSnapshot(directory) {
   const {resources: assets} = JSON.parse(await fs.readFile(path.join(root, 'assets.json'), 'utf8'));
   const mapping = new Map(assets.flatMap(a => [a.url, ...(a.aliases || [])].map(url => [url, a.localPath])));
   const issues = [];
+  let validPreview=true;
+  try{assertSnapshotHtml(html);}catch(error){validPreview=false;issues.push({kind:'invalid-preview-document',reason:error.message});}
   const stats = { assets: assets.length, svgUses: 0,
     excludedTemplateSvgUses: [...html.matchAll(/<use\b/gi)].length - [...activeHtml.matchAll(/<use\b/gi)].length,
     localSvgUses: 0, remoteSvgUses: 0,
@@ -99,7 +102,7 @@ export async function auditSnapshot(directory) {
       }
     }
   }
-  return { directory: root, kind: 'static-audit', visualVerification: false, stats,
+  return { directory: root, validPreview, kind: 'static-audit', visualVerification: false, stats,
     issueCount: issues.length, issues: issues.slice(0, 1000), truncated: issues.length > 1000 };
 }
 
@@ -110,6 +113,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     results.push(result);
     console.log(path.basename(directory), JSON.stringify(result.stats), 'issues:', result.issueCount);
   }
+  if(results.some(result=>!result.validPreview))process.exitCode=1;
   await fs.mkdir('test-results', { recursive: true });
   await fs.writeFile('test-results/existing-snapshots.json', JSON.stringify(results, null, 2));
 }

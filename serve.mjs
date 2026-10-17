@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import http from 'node:http';
+import {assertSnapshotHtml} from './snapshot-validation.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -29,6 +30,10 @@ export async function createPreviewServer(directory) {
       res.writeHead(403); res.end('Forbidden'); return;
     }
     const content = await fs.readFile(file);
+    if(file===path.join(root,'index.html')) {
+      try{assertSnapshotHtml(content.toString('utf8'));}
+      catch(error){res.writeHead(500,{'Content-Type':'text/plain; charset=utf-8'});res.end(error.message);return;}
+    }
     res.writeHead(200, { 'Content-Type': types[path.extname(file).toLowerCase()] || 'application/octet-stream' });
     res.end(content);
   } catch {

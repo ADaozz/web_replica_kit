@@ -4,10 +4,10 @@
 
 ## 自动化回归
 
-初次重构为 48 项；广告/加载清理及手动确认追加后，最终检查全部通过，共 53 项：
+初次重构为 48 项；广告/加载清理及手动确认追加后，最终检查全部通过，共 56 项：
 
-- `npm test`：43 项，URL、图标、资源、JSON Writer、DOM、CLI 与目录互斥。
-- `npm run test:e2e`：5 项，导航浏览器提取、独立两命令流程、退出码、离线逐像素对照及旧式文档模式。
+- `npm test`：45 项，URL、图标、资源、JSON Writer、DOM、CLI 与目录互斥。
+- `npm run test:e2e`：6 项，导航浏览器提取、独立两命令流程、退出码、离线逐像素对照及旧式文档模式。
 - `npm run test:css`：3 项，动态规则、条件、作用域、变量字体简写和 inline style。
 - `npm run test:scroll`：2 项，file/HTTP 预览、嵌套和 Shadow DOM 滚动、非敏感表单显示。
 
@@ -85,3 +85,11 @@ CSSOM-only 的构造样式表或发生复杂修改的规则仍受浏览器序列
 - 在真实 Shoelace Dropdown 页面上再次采集，`report.cleanup` 明确记录删除 `sl-dialog#wa-dialog` 推广弹窗，截图不再被广告遮罩覆盖，主页面可见。仍有 5,185 元素超过 5,000 的结构预算，状态保持 partial；没有隐藏此限制。证据位于本机 `test-results/shoelace-cleaned-fixed/`。
 - 手动确认测试覆盖按 Enter 前不继续、提示仅走诊断流、非 TTY 失败、EOF/浏览器关闭中止、manual 强制 headed，以及真实 capture 链路在确认前不生成 DOM/截图、确认后执行清理并记录确认结果。
 - 当前 CI 没有桌面显示服务器，因此确认门控使用真实无头 Chromium 验证，终端输入用可控流验证；实际可见窗口仍需在用户桌面环境运行 `--manual` 验收。未将此项冒充有头 GUI 实测。
+
+## 追加验证：undefined 空白预览
+
+在历史测试目录发现正文为 `<!DOCTYPE html>\nundefined` 的无效产物。Playwright 的 evaluateHandle 接收字符串时把箭头函数作为表达式返回，而非调用它，是该次旧产物的原因；当前实现传入可执行函数，并检查 DOM 句柄类型。新增完整 HTML 校验同时防止序列化外层 outerHTML 异常返回 undefined。
+
+新增回归覆盖：函数句柄、undefined outerHTML、无效历史产物的审计与 HTTP 500，以及正常 UI 中的 undefined 文本和旧式无 Doctype HTML 不被误判。重新采集 Shoelace（max-nodes=10000）成功，status=ok；新产物位于本机 `test-results/shoelace-preview-repaired/`，历史错误文件未作为有效证据覆盖使用。
+
+新预览已分别通过 file:// 和本地 HTTP 浏览器验证：均正常显示主内容，HTTP 200，无页面脚本错误，静态审计问题数为 0；推广弹窗为 0。与本次采集截图的差异率均约 0.0569%，未将其宣称为逐像素一致。详细数据位于本机 preview-verification.json。

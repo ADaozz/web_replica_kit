@@ -9,3 +9,4 @@ import './cli.test.mjs';
 
 import './page-cleanup.test.mjs';
 import './manual-confirmation.test.mjs';
+import './snapshot-validation.test.mjs';

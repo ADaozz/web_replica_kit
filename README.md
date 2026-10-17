@@ -104,6 +104,8 @@ node serve.mjs ./output/products 4173
 node scripts/audit-snapshot.mjs ./output/products
 ```
 
+生成时会验证完整 HTML 文档；无效序列化结果（例如只有 undefined 的旧产物）会失败。审计通过 `validPreview: false` 标记这类文件并退出 1，本地预览服务返回 HTTP 500，要求在新目录重新采集，不会把白屏当作成功。
+
 预览保留静态显示和原生 HTML 行为，Dropdown、Switch、Modal 等业务交互需要 Agent 自行实现。仅允许项目自身的极小滚动恢复及自定义元素静态显示初始化脚本执行。
 
 ## 限制与安全
