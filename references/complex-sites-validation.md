@@ -98,3 +98,24 @@ node scripts/verify-hover-menus.mjs test-results/hover-offline-new --offline \
 - `test-results/hover-menus-offline/summary.json`：静态产物中的隐藏 DOM 检查。
 
 网页内容、样式和截图只保留在工作区；Git 仅提交测试工具、目标矩阵、回归测试及本报告。
+
+## Lovable 背景修复复测（2026-10-17）
+
+此前 Lovable 49.290% 差异包含 Canvas 渐变背景缺失。现在保留原 Canvas 标签与布局，将可读取的已渲染像素保存为静态 PNG 背景，不增加绘制或动画 Runtime。原始 CSS 和 DOM/Computed 证据不改写成位图；仅预览添加恢复像素的背景层。Open Shadow DOM 内的画布同样处理。
+
+复测命令：
+
+```sh
+node scripts/test-sites.mjs --matrix tests/complex-site-matrix.json --only lovable \
+  --out test-results/canvas-lovable --wait 3000 --max-nodes 10000
+```
+
+- 来源页面：https://lovable.dev/；实际视口 1440×900，1579 个 DOM 元素，无截断。
+- 1 个画布成功导出，2400×2420，PNG 8,848,644 字节，路径记录于 `report.canvasSnapshots` 和 `assets.json`（source 为 `canvas-bitmap`）。
+- 本次源页面截图与本次断网 file/HTTP 预览，pixelmatch 差异均为 0%；已人工查看预览，蓝色、粉色和红色渐变完整显示。这是本次观测的同视口对比，旧测试与本次源站内容并非固定不变。
+- 状态仍为 partial：源站 12 个图像请求返回 404，审计还有 16 个未本地化 CSS 引用；背景修复不能代表这些资源也已修复。
+- 耗时约 12.9 秒；总保存资源 13,881,277 字节。原始截图、离线预览截图和报告留在上述本地测试目录，不提交网页内容。
+- 新增 2 项自动化测试：渐变/透明度/已有 CSS 背景/边框与 padding/Open Shadow DOM 的离线截图一致；读回失败、零尺寸、存储预算失败的报告与无破损引用处理。
+- 全部检查通过：npm test 47，test:e2e 11，test:scroll 2，test:css 3，共 63 项。
+
+边界：只冻结当前可读取帧；不播放 Canvas 动画，也不重建被 WebGL 丢弃的缓冲区。跨域污染、零尺寸、超过 16MP 或单文件/总资源预算、写盘失败均会记录 unavailable 并令采集为 partial。合法的透明画布与已丢弃内容的透明 WebGL 画布不保证能够区分。

@@ -80,9 +80,9 @@ async function waitForPending(pending) {
   }
 }
 
-export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}) {
+export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {storeCanvas} = {}) {
   // Preserve the rendered DOM and native CSS; only scroll initialization is authorized.
-  const render = ({ mappings,stylesheetSources }) => {
+  const render = ({ mappings,stylesheetSources,maxCanvasFileBytes,maxCanvasTotalBytes }) => {
     const localMap = mappings;
     const base = document.baseURI;
     function mapURL(raw) {
@@ -114,6 +114,8 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}) {
     }
     const scrollStates = [];
     const definedElements = [];
+    const canvasFrames = [];
+    let canvasBytes=0;
     function cloneRendered(source) {
       if(source.nodeType===Node.COMMENT_NODE || (source.nodeType===Node.ELEMENT_NODE && ['script','noscript'].includes(source.localName)))return document.createTextNode('');
       if(source.localName==='link' && source.relList.contains('stylesheet') && source.sheet) {
@@ -132,6 +134,21 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}) {
       if(source.localName==='meta' && /token|secret|csrf|authorization|api[_-]?key/i.test(source.getAttribute('name') || ''))return document.createTextNode('');
       const target = source.cloneNode(false);
       if (source.nodeType !== Node.ELEMENT_NODE) return target;
+      if(source.localName==='canvas' && source.isConnected) {
+        const frame={target,width:source.width,height:source.height};
+        try {
+          if(!source.width || !source.height)throw new Error('Canvas has zero intrinsic dimensions');
+          if(source.width*source.height>16777216)throw new Error('Canvas exceeds 16 megapixel export budget');
+          frame.data=source.toDataURL('image/png');
+          if(!frame.data.startsWith('data:image/png;base64,'))throw new Error('Canvas PNG export unavailable');
+          const bytes=Math.ceil((frame.data.length-22)*3/4);
+          if(bytes>maxCanvasFileBytes || canvasBytes+bytes>maxCanvasTotalBytes)throw new Error('Canvas exceeds capture size budget');
+          canvasBytes+=bytes;
+          const style=getComputedStyle(source);
+          frame.background=Object.fromEntries(['image','size','position','repeat','origin','clip','attachment','blend-mode'].map(name=>[name,style.getPropertyValue('background-'+name)]));
+        }catch(error){delete frame.data;frame.error=String(error.message);}
+        canvasFrames.push(frame);
+      }
       if(source.localName==='input') {
         const sensitive=source.matches('input[type=password],input[type=file],input[type=hidden]') || /token|secret|password|csrf|api[_-]?key|session|credential|authorization/i.test(`${source.id} ${source.name}`);
         if(sensitive)target.removeAttribute('value');else target.setAttribute('value',source.value);
@@ -226,17 +243,39 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}) {
       charset.setAttribute('charset', 'utf-8');
       head.prepend(charset);
     }
+    Object.defineProperty(clone,'__wrkCanvasFrames',{value:canvasFrames});
     return clone;
   };
   // Compose only our own helper functions; webpage data stays in structured arguments.
-  const renderInBrowser = new Function('args',`const rewriteSrcsetUrls = ${rewriteSrcsetUrls.toString()}; const staticSheetText = ${staticSheetText.toString()}; return (${render.toString()})(args);`);
-  const snapshot = await page.evaluateHandle(renderInBrowser,{mappings:assetMap,stylesheetSources});
+  const renderInBrowser = new Function('args',`const rewriteSrcsetUrls = ${rewriteSrcsetUrls.toString()}; const staticSheetText = ${staticSheetText.toString()}; return new Promise((resolve,reject)=>requestAnimationFrame(()=>{try{resolve((${render.toString()})(args));}catch(error){reject(error);}}));`);
+  const snapshot = await page.evaluateHandle(renderInBrowser,{mappings:assetMap,stylesheetSources,maxCanvasFileBytes:MAX_PER_FILE,maxCanvasTotalBytes:MAX_TOTAL});
   try {
     const valid=await snapshot.evaluate(root=>!!root && root.nodeType===1 && root.localName==='html');
     if(!valid)throw new Error('Static preview did not produce an HTML document');
+    const frames=await snapshot.evaluate(root=>root.__wrkCanvasFrames.map(({target,background,...frame})=>frame));
+    const canvases=[];
+    for(const [index,frame] of frames.entries()) {
+      const result={index:index+1,width:frame.width,height:frame.height,status:'unavailable'};
+      try {
+        if(frame.error)throw new Error(frame.error);
+        const body=Buffer.from(frame.data.split(',')[1],'base64');
+        if(body.length>MAX_PER_FILE)throw new Error('Canvas exceeds file size budget');
+        result.image=storeCanvas?await storeCanvas(body,result):frame.data;
+        result.bytes=body.length;result.status='captured';
+      }catch(error){result.reason=String(error.message);}
+      canvases.push(result);
+    }
+    await snapshot.evaluate((root,frames)=>{
+      for(const frame of frames) {
+        if(frame.status!=='captured')continue;
+        const {target,background}=root.__wrkCanvasFrames[frame.index-1];
+        const first={image:`url("${frame.image}")`,size:'100% 100%',position:'0% 0%',repeat:'no-repeat',origin:'content-box',clip:'content-box',attachment:'scroll','blend-mode':'normal'};
+        for(const [name,value] of Object.entries(first))target.style.setProperty('background-'+name,value+', '+background[name],'important');
+      }
+    },canvases);
     const html = await snapshot.evaluate(root => (document.doctype ? new XMLSerializer().serializeToString(document.doctype)+'\n' : '') + root.outerHTML);
     assertSnapshotHtml(html);
-    return { html: injectSnapshotScrollRuntime(finalizeSnapshotResources(html)) };
+    return { html: injectSnapshotScrollRuntime(finalizeSnapshotResources(html)), canvases };
   } finally { await snapshot.dispose(); }
 }
 
@@ -345,7 +384,11 @@ async function captureInto(opts) {
     await waitForPending(pending);
     const stylesheetSources={};
     for(const r of recorded.values())if(r.localPath.endsWith('.css')){const text=await fs.readFile(path.join(opts.out,r.localPath),'utf8');for(const url of [r.url,...[...redirectAliases].filter(([,target])=>target===r.url).map(([alias])=>alias)])stylesheetSources[url]=text;}
-    const settledSnapshot=await makeSnapshotHtml(page,currentMappings(),stylesheetSources);
+    const settledSnapshot=await makeSnapshotHtml(page,currentMappings(),stylesheetSources,{storeCanvas:async(body,frame)=>{
+      const resource=await storeResource(`wrk:canvas-${frame.index}`,body,'image/png','image');
+      resource.source='canvas-bitmap';resource.canvasIndex=frame.index;resource.width=frame.width;resource.height=frame.height;
+      return resource.localPath;
+    }});
     await page.screenshot({path:path.join(opts.out,'screenshot.png'),animations:'allow'});
     const inventory=await page.evaluate(discoverIcons,{limit:30000});
     await waitForPending(pending);
@@ -437,10 +480,11 @@ async function captureInto(opts) {
     await fs.writeFile(path.join(opts.out,'index.html'),html);
     const missing=[...[...resourceFailures.values()].filter(r=>!recorded.has(r.url)&&!recorded.has(redirectAliases.get(r.url))),...iconReport.missing.map(r=>({...r,type:r.kind,source:'icon-inventory'}))];
     const warnings=[...errors,...missing.map(r=>`${r.type || r.kind}: ${r.reason || r.reference || r.url || 'unresolved'}`)];
+    for(const frame of settledSnapshot.canvases)if(frame.status!=='captured')warnings.push(`Canvas ${frame.index}: ${frame.reason}`);
     if(dom.truncated)warnings.push('DOM node budget exceeded');
     if(inventory.truncated)warnings.push('Resource inventory node budget exceeded');
     for(const sheet of css.stylesheets)if(sheet.readError&&!sheet.originalPath)warnings.push(`Stylesheet unavailable: ${sheet.url || sheet.scope}`);
-    const limitations=['Original CSS and limited computed properties do not establish every winning cascade declaration.','Closed Shadow DOM is inaccessible. Iframe content is not captured; preview frames are blank. Canvas pixels are visible only in the screenshot.','Only the rendered initial page is observed. Lazy content outside this state is not explored.'];
+    const limitations=['Original CSS and limited computed properties do not establish every winning cascade declaration.','Closed Shadow DOM is inaccessible. Iframe content is not captured; preview frames are blank. Readable canvas pixels are frozen as PNG backgrounds; tainted or unavailable canvases cannot be reconstructed. Animations and discarded WebGL buffers are not reconstructed.','Only the rendered initial page is observed. Lazy content outside this state is not explored.'];
     const write=(file,value)=>writeJsonFile(path.join(opts.out,file),{schemaVersion:3,...value});
     await write('components.json',{elements:dom.elements});
     await write('layout.json',{viewport:dom.viewport,pageSize:dom.pageSize,scroll:dom.scroll,elements:dom.layout});
@@ -451,7 +495,7 @@ async function captureInto(opts) {
     if(staticAudit.issueCount)warnings.push(`Static resource audit found ${staticAudit.issueCount} unresolved references; see report.staticAudit`);
     timings.output=performance.now()-phase;timings.total=performance.now()-started;
     const status=warnings.length?'partial':'ok';
-    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,confirmation,cleanup,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,staticAudit,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,limitations,warnings,timingsMs:timings,previewGenerated:true,nodeCpuTimeMs:Object.fromEntries(Object.entries(process.cpuUsage(cpuStarted)).map(([key,value])=>[key,value/1000])),resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
+    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,confirmation,cleanup,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,staticAudit,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,canvasSnapshots:settledSnapshot.canvases,limitations,warnings,timingsMs:timings,previewGenerated:true,nodeCpuTimeMs:Object.fromEntries(Object.entries(process.cpuUsage(cpuStarted)).map(([key,value])=>[key,value/1000])),resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
     return {status,url:page.url(),output:opts.out,files:{html:'index.html',components:'components.json',layout:'layout.json',styles:'styles/stylesheets.json',report:'report.json'},warnings};
   }finally{await resourceClient?.dispose();await context?.close();await browser?.close();}
 }

@@ -111,7 +111,7 @@ node scripts/audit-snapshot.mjs ./output/products
 ## 限制与安全
 
 - 不推断 JS-only 路由，不读取 JS Bundle 正文，不收集事件处理器、业务逻辑、状态图或完整 CDP 节点匹配链。
-- Open Shadow DOM 可读取；Closed Shadow DOM 无法读取。iframe 内容不采集，预览置空。Canvas 的像素只存在于截图。
+- Open Shadow DOM 可读取；Closed Shadow DOM 无法读取。iframe 内容不采集，预览置空。可读取的 Canvas 像素保存为 PNG，作为原 Canvas 的静态背景恢复（包含 Open Shadow DOM）。画布动画不会重放；跨域污染、零尺寸或超出预算时报告 partial，详见 report.canvasSnapshots。WebGL 默认清空的绘制缓冲区可能无法读取有效画面。
 - 默认不自动滚动。初始状态未渲染的懒加载内容不算已采集。动画、动态内容和外站资源失败可能造成预览差异。
 - 响应存储每文件上限 12 MiB，总量 120 MiB；图标补全另有 60 秒预算。超限与缺失会报告。未使用的 CSS 图像变体可能保持远程地址，静态审计会列出这些引用并标记 partial；不会为下载大量未显示的变体而探索页面。
 - 页面脚本只在原站加载时由 Chromium 执行，采集产物不保存这些脚本。注释、事件属性、已知 Hydration 数据和敏感表单字段会过滤，SVG 资源也会移除脚本及事件属性；普通 CSS 所需的 data 属性保留。补采资源使用隔离的 HTTP 客户端，不继承页面 Cookie；支持环境 HTTP(S) 代理。
