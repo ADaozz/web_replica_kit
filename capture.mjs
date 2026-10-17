@@ -1,3 +1,4 @@
+import {decodeVideoFrame} from './video-static.mjs';
 import {assertSnapshotHtml} from './snapshot-validation.mjs';
 import {waitForConfirmation} from './scripts/manual-confirmation.mjs';
 import {cleanPage} from './page-cleanup.mjs';
@@ -80,9 +81,23 @@ async function waitForPending(pending) {
   }
 }
 
-export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {storeCanvas} = {}) {
+export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {storeCanvas,storeVideo,screenshotPath} = {}) {
   // Preserve the rendered DOM and native CSS; only scroll initialization is authorized.
-  const render = ({ mappings,stylesheetSources,maxCanvasFileBytes,maxCanvasTotalBytes }) => {
+  const videoTimes=await page.evaluateHandle(async()=>{
+    const videos=[];
+    function walk(root){for(const el of root.querySelectorAll('*')){if(el.localName==='video')videos.push(el);if(el.shadowRoot)walk(el.shadowRoot);}}
+    walk(document);
+    const times=new WeakMap();
+    await Promise.all(videos.filter(v=>v.readyState>=2).map(v=>new Promise(resolve=>{
+      let settled=false,timer,callback;
+      const finish=time=>{if(settled)return;settled=true;clearTimeout(timer);if(callback!==undefined)v.cancelVideoFrameCallback(callback);v.pause();times.set(v,time);resolve();};
+      timer=setTimeout(()=>finish(v.currentTime),500);
+      if(v.requestVideoFrameCallback)callback=v.requestVideoFrameCallback((_now,metadata)=>finish(metadata.mediaTime));
+      else finish(v.currentTime);
+    })));
+    return times;
+  });
+  const render = ({ mappings,stylesheetSources,maxCanvasFileBytes,maxCanvasTotalBytes,videoTimes }) => {
     const localMap = mappings;
     const base = document.baseURI;
     function mapURL(raw) {
@@ -115,6 +130,8 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {
     const scrollStates = [];
     const definedElements = [];
     const canvasFrames = [];
+    const videoFrames = [];
+    const animationSnapshots=[];
     let canvasBytes=0;
     function cloneRendered(source) {
       if(source.nodeType===Node.COMMENT_NODE || (source.nodeType===Node.ELEMENT_NODE && ['script','noscript'].includes(source.localName)))return document.createTextNode('');
@@ -134,6 +151,37 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {
       if(source.localName==='meta' && /token|secret|csrf|authorization|api[_-]?key/i.test(source.getAttribute('name') || ''))return document.createTextNode('');
       const target = source.cloneNode(false);
       if (source.nodeType !== Node.ELEMENT_NODE) return target;
+      // WAAPI effects are live browser state, absent from inline attributes.
+      // Freeze only properties actually animated on this element, never source JS.
+      const animatedProperties=new Set();
+      for(const animation of source.getAnimations()) {
+        if(animation.effect?.target!==source || animation.effect?.pseudoElement)continue;
+        for(const keyframe of animation.effect.getKeyframes())for(const name of Object.keys(keyframe)) {
+          if(['offset','computedOffset','easing','composite'].includes(name))continue;
+          animatedProperties.add(name.startsWith('--')?name:name.replace(/[A-Z]/g,c=>'-'+c.toLowerCase()));
+        }
+      }
+      if(animatedProperties.size) {
+        const style=getComputedStyle(source);
+        for(const name of animatedProperties)target.style.setProperty(name,style.getPropertyValue(name),'important');
+        target.style.setProperty('animation','none','important');target.style.setProperty('transition','none','important');
+        animationSnapshots.push({tag:source.localName,properties:[...animatedProperties]});
+      }
+      if(source.localName==='video' && source.isConnected) {
+        const frame={target,url:source.currentSrc || source.src,time:videoTimes.get(source) ?? source.currentTime,width:source.videoWidth,height:source.videoHeight,poster:source.poster};
+        source.pause();
+        if(source.readyState>=2 && source.videoWidth && source.videoHeight) {
+          try {
+            if(source.videoWidth*source.videoHeight>16777216)throw new Error('Video frame exceeds 16 megapixel export budget');
+            const canvas=document.createElement('canvas');canvas.width=source.videoWidth;canvas.height=source.videoHeight;
+            canvas.getContext('2d').drawImage(source,0,0);frame.data=canvas.toDataURL('image/png');
+            const bytes=Math.ceil((frame.data.length-22)*3/4);
+            if(bytes>maxCanvasFileBytes || canvasBytes+bytes>maxCanvasTotalBytes)throw new Error('Video frame exceeds capture size budget');
+            canvasBytes+=bytes;
+          }catch(error){delete frame.data;frame.error=String(error.message);}
+        }
+        videoFrames.push(frame);
+      }
       if(source.localName==='canvas' && source.isConnected) {
         const frame={target,width:source.width,height:source.height};
         try {
@@ -244,14 +292,18 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {
       head.prepend(charset);
     }
     Object.defineProperty(clone,'__wrkCanvasFrames',{value:canvasFrames});
+    Object.defineProperty(clone,'__wrkVideoFrames',{value:videoFrames});
+    Object.defineProperty(clone,'__wrkAnimations',{value:animationSnapshots});
     return clone;
   };
   // Compose only our own helper functions; webpage data stays in structured arguments.
   const renderInBrowser = new Function('args',`const rewriteSrcsetUrls = ${rewriteSrcsetUrls.toString()}; const staticSheetText = ${staticSheetText.toString()}; return new Promise((resolve,reject)=>requestAnimationFrame(()=>{try{resolve((${render.toString()})(args));}catch(error){reject(error);}}));`);
-  const snapshot = await page.evaluateHandle(renderInBrowser,{mappings:assetMap,stylesheetSources,maxCanvasFileBytes:MAX_PER_FILE,maxCanvasTotalBytes:MAX_TOTAL});
+  let snapshot;
+  try {snapshot = await page.evaluateHandle(renderInBrowser,{mappings:assetMap,stylesheetSources,maxCanvasFileBytes:MAX_PER_FILE,maxCanvasTotalBytes:MAX_TOTAL,videoTimes});}finally{await videoTimes.dispose();}
   try {
     const valid=await snapshot.evaluate(root=>!!root && root.nodeType===1 && root.localName==='html');
     if(!valid)throw new Error('Static preview did not produce an HTML document');
+    if(screenshotPath)await page.screenshot({path:screenshotPath,animations:'allow'});
     const frames=await snapshot.evaluate(root=>root.__wrkCanvasFrames.map(({target,background,...frame})=>frame));
     const canvases=[];
     for(const [index,frame] of frames.entries()) {
@@ -273,9 +325,30 @@ export async function makeSnapshotHtml(page, assetMap, stylesheetSources = {}, {
         for(const [name,value] of Object.entries(first))target.style.setProperty('background-'+name,value+', '+background[name],'important');
       }
     },canvases);
+    const videoFrames=await snapshot.evaluate(root=>root.__wrkVideoFrames.map(({target,...frame})=>frame));
+    const videos=[];
+    for(const [index,frame] of videoFrames.entries()) {
+      const result={index:index+1,url:frame.url,time:frame.time,width:frame.width,height:frame.height,status:frame.poster?'poster':'empty'};
+      try {
+        if(frame.error&&!storeVideo)throw new Error(frame.error);
+        if(frame.data || frame.error) {
+          result.image=storeVideo?await storeVideo(frame,result):frame.data;
+          result.status='captured';
+        }
+      }catch(error){result.status='unavailable';result.reason=String(error.message);}
+      videos.push(result);
+    }
+    await snapshot.evaluate((root,frames)=>{
+      for(const frame of frames) {
+        const {target}=root.__wrkVideoFrames[frame.index-1];
+        target.removeAttribute('autoplay');target.removeAttribute('src');target.setAttribute('preload','none');
+        for(const source of target.querySelectorAll('source'))source.removeAttribute('src');
+        if(frame.status==='captured')target.setAttribute('poster',frame.image);
+      }
+    },videos);
     const html = await snapshot.evaluate(root => (document.doctype ? new XMLSerializer().serializeToString(document.doctype)+'\n' : '') + root.outerHTML);
     assertSnapshotHtml(html);
-    return { html: injectSnapshotScrollRuntime(finalizeSnapshotResources(html)), canvases };
+    return { html: injectSnapshotScrollRuntime(finalizeSnapshotResources(html)), canvases, videos, animations:await snapshot.evaluate(root=>root.__wrkAnimations) };
   } finally { await snapshot.dispose(); }
 }
 
@@ -353,6 +426,12 @@ async function captureInto(opts) {
         if(response.status()<200 || response.status()>=300){if(!request.redirectedTo() && shouldStore(type,response.headers()['content-type'] || ''))missingResource(request.url(),type,'unsuccessful HTTP response',{status:response.status()});return;}
         const contentType = response.headers()['content-type'] || '';
         if (!shouldStore(type, contentType)) return;
+        if(response.status()===206) {
+          const range=/^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers()['content-range'] || '');
+          if(!range || Number(range[1])!==0 || Number(range[2])+1!==Number(range[3])) {
+            missingResource(response.url(),type,'Incomplete HTTP range response',{contentRange:response.headers()['content-range'] || null});return;
+          }
+        }
         for (let previous = request.redirectedFrom(); previous; previous = previous.redirectedFrom()) {
           redirectAliases.set(previous.url(), response.url());
         }
@@ -384,12 +463,31 @@ async function captureInto(opts) {
     await waitForPending(pending);
     const stylesheetSources={};
     for(const r of recorded.values())if(r.localPath.endsWith('.css')){const text=await fs.readFile(path.join(opts.out,r.localPath),'utf8');for(const url of [r.url,...[...redirectAliases].filter(([,target])=>target===r.url).map(([alias])=>alias)])stylesheetSources[url]=text;}
-    const settledSnapshot=await makeSnapshotHtml(page,currentMappings(),stylesheetSources,{storeCanvas:async(body,frame)=>{
+    const settledSnapshot=await makeSnapshotHtml(page,currentMappings(),stylesheetSources,{screenshotPath:path.join(opts.out,'screenshot.png'),storeCanvas:async(body,frame)=>{
       const resource=await storeResource(`wrk:canvas-${frame.index}`,body,'image/png','image');
       resource.source='canvas-bitmap';resource.canvasIndex=frame.index;resource.width=frame.width;resource.height=frame.height;
       return resource.localPath;
+    },storeVideo:async(frame,result)=>{
+      let data=frame.data;
+      if(!data) {
+        if(!isHttpUrl(frame.url))throw new Error(frame.error || 'Unsupported video resource protocol');
+        let resource=recorded.get(frame.url) || recorded.get(redirectAliases.get(frame.url));
+        if(!resource) {
+          const response=await resourceClient.get(frame.url,{timeout:12000});
+          try {
+            if(response.status()!==200)throw new Error(`Video resource HTTP ${response.status()}; complete response required`);
+            if(!/^video\//i.test(response.headers()['content-type'] || ''))throw new Error('Unsupported video resource content type');
+            if(Number(response.headers()['content-length'])>MAX_PER_FILE)throw new Error('Video resource exceeds file size budget');
+            resource=await storeResource(frame.url,await response.body(),response.headers()['content-type'],'media');
+          }finally{await response.dispose();}
+        }
+        data=await decodeVideoFrame(context,await fs.readFile(path.join(opts.out,resource.localPath)),resource.contentType,frame.time);
+      }
+      const resource=await storeResource(`wrk:video-frame-${result.index}`,Buffer.from(data.split(',')[1],'base64'),'image/png','image');
+      resource.source='video-frame';resource.videoIndex=result.index;resource.width=frame.width;resource.height=frame.height;resource.time=frame.time;
+      result.bytes=resource.bytes;
+      return resource.localPath;
     }});
-    await page.screenshot({path:path.join(opts.out,'screenshot.png'),animations:'allow'});
     const inventory=await page.evaluate(discoverIcons,{limit:30000});
     await waitForPending(pending);
     const stylesheets=[];
@@ -480,11 +578,12 @@ async function captureInto(opts) {
     await fs.writeFile(path.join(opts.out,'index.html'),html);
     const missing=[...[...resourceFailures.values()].filter(r=>!recorded.has(r.url)&&!recorded.has(redirectAliases.get(r.url))),...iconReport.missing.map(r=>({...r,type:r.kind,source:'icon-inventory'}))];
     const warnings=[...errors,...missing.map(r=>`${r.type || r.kind}: ${r.reason || r.reference || r.url || 'unresolved'}`)];
+    for(const frame of settledSnapshot.videos)if(frame.status==='unavailable')warnings.push(`Video ${frame.index}: ${frame.reason}`);
     for(const frame of settledSnapshot.canvases)if(frame.status!=='captured')warnings.push(`Canvas ${frame.index}: ${frame.reason}`);
     if(dom.truncated)warnings.push('DOM node budget exceeded');
     if(inventory.truncated)warnings.push('Resource inventory node budget exceeded');
     for(const sheet of css.stylesheets)if(sheet.readError&&!sheet.originalPath)warnings.push(`Stylesheet unavailable: ${sheet.url || sheet.scope}`);
-    const limitations=['Original CSS and limited computed properties do not establish every winning cascade declaration.','Closed Shadow DOM is inaccessible. Iframe content is not captured; preview frames are blank. Readable canvas pixels are frozen as PNG backgrounds; tainted or unavailable canvases cannot be reconstructed. Animations and discarded WebGL buffers are not reconstructed.','Only the rendered initial page is observed. Lazy content outside this state is not explored.'];
+    const limitations=['Original CSS and limited computed properties do not establish every winning cascade declaration.','Closed Shadow DOM is inaccessible. Iframe content is not captured; preview frames are blank. Readable canvas pixels are frozen as PNG backgrounds; tainted or unavailable canvases cannot be reconstructed. Animations and discarded WebGL buffers are not reconstructed.','Only the rendered initial page is observed. Lazy content outside this state is not explored. Readable video frames and element animation properties are frozen; video playback and original animation logic are not replayed.'];
     const write=(file,value)=>writeJsonFile(path.join(opts.out,file),{schemaVersion:3,...value});
     await write('components.json',{elements:dom.elements});
     await write('layout.json',{viewport:dom.viewport,pageSize:dom.pageSize,scroll:dom.scroll,elements:dom.layout});
@@ -495,7 +594,7 @@ async function captureInto(opts) {
     if(staticAudit.issueCount)warnings.push(`Static resource audit found ${staticAudit.issueCount} unresolved references; see report.staticAudit`);
     timings.output=performance.now()-phase;timings.total=performance.now()-started;
     const status=warnings.length?'partial':'ok';
-    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,confirmation,cleanup,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,staticAudit,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,canvasSnapshots:settledSnapshot.canvases,limitations,warnings,timingsMs:timings,previewGenerated:true,nodeCpuTimeMs:Object.fromEntries(Object.entries(process.cpuUsage(cpuStarted)).map(([key,value])=>[key,value/1000])),resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
+    await write('report.json',{status,inputUrl:opts.url,finalUrl:page.url(),viewport:dom.viewport,confirmation,cleanup,dom:{total:dom.totalNodes,captured:dom.elements.length,truncated:dom.truncated},stylesheetCount:css.stylesheets.length,missingResources:missing,staticAudit,shadowRoots:dom.shadowRoots,iframes:dom.iframes,canvases:dom.canvases,canvasSnapshots:settledSnapshot.canvases,videoSnapshots:settledSnapshot.videos,animationSnapshots:settledSnapshot.animations,limitations,warnings,timingsMs:timings,previewGenerated:true,nodeCpuTimeMs:Object.fromEntries(Object.entries(process.cpuUsage(cpuStarted)).map(([key,value])=>[key,value/1000])),resourceBytes:totalBytes,nodeMemoryBytes:process.memoryUsage().rss});
     return {status,url:page.url(),output:opts.out,files:{html:'index.html',components:'components.json',layout:'layout.json',styles:'styles/stylesheets.json',report:'report.json'},warnings};
   }finally{await resourceClient?.dispose();await context?.close();await browser?.close();}
 }

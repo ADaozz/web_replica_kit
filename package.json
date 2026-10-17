@@ -8,7 +8,7 @@
     "capture": "node scripts/capture.mjs",
     "serve": "node serve.mjs",
     "test": "node tests/run.mjs",
-    "test:e2e": "node --test tests/capture-static.e2e.mjs tests/discover-browser.e2e.mjs tests/icons.test.mjs tests/site-runner.e2e.mjs tests/hidden-components.e2e.mjs tests/canvas-static.e2e.mjs",
+    "test:e2e": "node --test tests/capture-static.e2e.mjs tests/discover-browser.e2e.mjs tests/icons.test.mjs tests/site-runner.e2e.mjs tests/hidden-components.e2e.mjs tests/canvas-static.e2e.mjs tests/video-static.e2e.mjs tests/animation-static.e2e.mjs",
     "test:scroll": "node --test tests/snapshot-scroll.e2e.mjs",
     "test:css": "node --test tests/css-static.e2e.mjs",
     "test:sites": "node scripts/test-sites.mjs",

@@ -119,3 +119,30 @@ node scripts/test-sites.mjs --matrix tests/complex-site-matrix.json --only lovab
 - 全部检查通过：npm test 47，test:e2e 11，test:scroll 2，test:css 3，共 63 项。
 
 边界：只冻结当前可读取帧；不播放 Canvas 动画，也不重建被 WebGL 丢弃的缓冲区。跨域污染、零尺寸、超过 16MP 或单文件/总资源预算、写盘失败均会记录 unavailable 并令采集为 partial。合法的透明画布与已丢弃内容的透明 WebGL 画布不保证能够区分。
+
+## Framer 主视觉与动画样式复测（2026-10-17）
+
+用户反馈的 Framer 预览确有偏差。定位出三类缺陷：视频 HTTP 206 的首段被误存为完整 MP4；预览播放/显示的帧与采集帧不同；SVG Data URL 在晚期资源改写时被二次 HTML 转义。另发现 WAAPI 动画生效值并不总会写回 inline style（例如 Cookie 提示的 computed opacity 为 1，inline opacity 仍为 0），复制底层样式会丢失已显示元素。文字差异不能仅凭缩略图判断，像素分区复核确认最终标题和导航一致。
+
+修复内容：
+
+- 不完整 206 响应在读取正文前排除，不再冒充完整资源。
+- 使用已呈现视频帧的 mediaTime（可用时）冻结当前画面。跨域画布污染时，只补全同一个已观察视频，在隔离页面解码；只使用已保存的媒体字节，不运行原站脚本、不访问新网站页面。PNG poster 替代播放，预览移除视频源及 autoplay；未渲染的视频保持原 poster 或空白，不为它们加载新内容。
+- 静态预览只冻结元素实际动画涉及的计算属性，不实现动画/交互 Runtime，也不保存 JS keyframes 源逻辑。原始 CSS、结构和计算证据继续保存。
+- 源截图提前至 HTML 克隆附近、异步资源补全之前，减少页面继续变化引起的时序偏差。
+- HTML 属性实体只解码/编码一次，修复包含原始 SVG 标记的 Data URL 背景（Framer 标志）。
+
+最终命令：
+
+```sh
+node scripts/test-sites.mjs --matrix tests/complex-site-matrix.json --only framer \
+  --out test-results/framer-final --wait 3000 --max-nodes 10000
+```
+
+最终结果：1440×900、3020 个元素，无 DOM 截断；1 个已渲染视频导出 2320×1300 PNG（481,700 字节，mediaTime 4.8s），3 个未渲染视频标为 empty；19 个动画元素的当前属性被静态保存。断网 file/HTTP 预览均无失败请求和 pageerror，与本次源截图的 pixelmatch 差异均为 **0.7875%**；标题/导航区域与 Cookie 提示区域差异为 0，剩余差异集中在视频区域。此次观测仍存在媒体采样/呈现差异，不声称逐像素无损。动态网站每次选取的原始帧不同，历史 22.121%、本次修改前 31.426% 与最终值并非同一张固定源图的 A/B 基准。
+
+状态仍为 partial：静态 CSS 审计有 206 个未本地化引用，包含未使用变体。整体耗时 26.8s（同时运行自动化测试，不作为性能基准）。源图、HTML、file/HTTP 预览和完整报告留在上述本地目录，不提交真实网页产物。
+
+新增合成测试验证：同源与跨域分段视频保留指定蓝色帧、不会退回红色首帧；完整媒体字节数校验；Open Shadow DOM 视频；离线不播放与无原站脚本；原生 video/poster 采样允许每侧最多一个边缘像素的差异。另验证 WAAPI 覆盖旧 opacity/transform、Shadow DOM 动画静态显示、SVG Data URL 浏览器截图一致，以及实体改写的幂等性。
+
+最终全部检查通过：npm test 48、test:e2e 13、test:scroll 2、test:css 3，共 **66 项**。

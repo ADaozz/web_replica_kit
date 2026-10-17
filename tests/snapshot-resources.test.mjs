@@ -46,3 +46,10 @@ test('mixed data URL srcset preserves embedded bytes and localizes external cand
   assert.equal(rewriteSrcsetUrls(input,url=>url==='https://example.test/large.png'?'assets/large.png':url),expected);
   assert.ok(rewriteSnapshotAssets(`<img srcset="${input}">`,{'https://example.test/large.png':'assets/large.png'},'https://example.test/').includes(expected));
 });
+
+test('HTML-escaped SVG data URLs and numeric entities survive late rewriting without double encoding',()=>{
+  const html='<div style="background-image:url(&quot;data:image/svg+xml,&lt;svg xmlns=%22http://www.w3.org/2000/svg%22&gt;&lt;path d=%22M0 0%22/&gt;&lt;/svg&gt;&quot;)"></div><img src="https://example.test/&#x61;.png"><a href="https://example.test/?x=&amp;lt;">X</a>';
+  const rewritten=rewriteSnapshotAssets(html,{'https://example.test/a.png':'assets/a.png'},'https://example.test/');
+  assert.ok(rewritten.includes('data:image/svg+xml,&lt;svg'));assert.ok(!rewritten.includes('&amp;lt;svg'));assert.ok(rewritten.includes('src="assets/a.png"'));assert.ok(rewritten.includes('?x=&amp;lt;'));
+  assert.equal(rewriteSnapshotAssets(rewritten,{},'https://example.test/'),rewritten);
+});

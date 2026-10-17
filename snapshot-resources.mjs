@@ -23,8 +23,13 @@ export function finalizeSnapshotResources(html) {
 
 // Rewrite late resources without changing stylesheet boundaries or text nodes.
 export function rewriteSnapshotAssets(html, mappings, sourceURL) {
-  const decode = value => value.replace(/&quot;/g, '"').replace(/&#(?:39|x27);/gi, "'").replace(/&amp;/g, '&');
-  const encode = (value, quote) => value.replace(/&/g, '&amp;').replace(quote === '"' ? /"/g : /'/g, quote === '"' ? '&quot;' : '&#39;');
+  const decode = value => value.replace(/&(?:quot|apos|lt|gt|amp|#(?:x[0-9a-f]+|[0-9]+));/gi,entity=>{
+    const named={'&quot;':'"','&apos;':"'",'&lt;':'<','&gt;':'>','&amp;':'&'};
+    if(named[entity.toLowerCase()])return named[entity.toLowerCase()];
+    const code=entity[2].toLowerCase()==='x'?parseInt(entity.slice(3,-1),16):Number(entity.slice(2,-1));
+    return code>0&&code<=0x10ffff&&!(code>=0xd800&&code<=0xdfff)?String.fromCodePoint(code):'\uFFFD';
+  });
+  const encode = (value, quote) => value.replace(/&/g, '&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(quote === '"' ? /"/g : /'/g, quote === '"' ? '&quot;' : '&#39;');
   function map(raw) {
     if (!raw || /^(?:assets\/|#|data:|about:|javascript:)/i.test(raw)) return raw;
     try {
